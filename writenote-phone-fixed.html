@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>WriteNote — Viết từ điện thoại</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Inter:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#1B2340; --paper:#FBF7EE; --paper-edge:#EDE6D6;
+    --accent:#3F6B4A; --line-strong:rgba(27,35,64,0.18); --muted:#6B6F76;
+    --err:#8c3030;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;overflow:hidden;font-family:'Inter',system-ui,sans-serif;background:var(--paper-edge);overscroll-behavior:none;}
+  .wrap{display:flex;flex-direction:column;height:100%;min-height:100dvh;}
+  header{
+    display:flex;align-items:center;justify-content:space-between;
+    min-height:58px;padding:10px 14px;background:var(--paper-edge);border-bottom:1px solid var(--line-strong);
+    padding-top:max(10px, env(safe-area-inset-top));
+    gap:8px;
+  }
+  .wordmark{font-family:'Caveat',cursive;font-size:25px;font-weight:700;color:var(--ink);letter-spacing:.2px;flex:none;}
+  .wordmark span{color:var(--accent);}
+  .headerRight{display:flex;align-items:center;gap:6px;}
+  #status{font-size:11px;color:var(--accent);font-weight:600;background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;}
+  #status.err{color:var(--err);}
+  #debugToggle{font-size:11px;padding:6px 9px;min-height:auto;border-radius:999px;}
+  /* Banner lỗi JS runtime — mục tiêu chính: KHÔNG BAO GIỜ để màn hình trắng trơn khi có lỗi */
+  #fatalError{
+    display:none;padding:10px 12px;background:#4a1414;color:#ffe9e9;
+    font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.5;
+    white-space:pre-wrap;word-break:break-word;border-bottom:1px solid rgba(255,255,255,.15);
+  }
+  #fatalError .hdr{font-weight:700;color:#ffb3b3;margin-bottom:4px;font-family:'Inter',sans-serif;font-size:12px;}
+  #roomNotice{margin:10px 12px 0;padding:10px 12px;border:1px solid rgba(155,50,50,.25);border-radius:9px;background:#fff5f3;color:var(--err);font-size:12px;line-height:1.5;}
+  #roomNotice ul{margin:6px 0 0;padding-left:18px;}
+  #debugPanel{margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;background:#fff;color:var(--ink);font-size:11.5px;line-height:1.6;font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;}
+  canvas{flex:1;width:100%;min-height:0;touch-action:none;background:var(--paper);display:block;}
+  .toolbar{
+    display:flex;align-items:center;gap:7px;padding:9px 12px;
+    padding-bottom:max(9px, env(safe-area-inset-bottom));
+    background:var(--paper-edge);border-top:1px solid var(--line-strong);
+    overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;
+  }
+  .toolbar::-webkit-scrollbar{display:none;}
+  .swatch{width:30px;height:30px;border-radius:50%;border:2px solid transparent;flex:none;}
+  .swatch.active{border-color:var(--ink);}
+  button{
+    font-family:'Inter',sans-serif;font-weight:600;font-size:12px;
+    border:1px solid var(--line-strong);background:var(--paper);color:var(--ink);
+    border-radius:9px;padding:10px 13px;min-height:42px;flex:none;touch-action:manipulation;
+  }
+  button:active{transform:translateY(1px);}
+  button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  @media (max-width:420px){
+    header{min-height:54px;padding-left:12px;padding-right:12px;}
+    .wordmark{font-size:23px;}
+    #status{font-size:10px;padding:5px 8px;}
+    .toolbar{gap:6px;padding-left:10px;padding-right:10px;}
+    button{padding-left:11px;padding-right:11px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="wordmark">Write<span>Note</span></div>
+    <div class="headerRight">
+      <div id="status">Đang khởi tạo...</div>
+      <button id="debugToggle" type="button">Chi tiết</button>
+    </div>
+  </header>
+  <!-- Bắt mọi lỗi JS runtime chưa xử lý -> hiển thị thay vì để trắng màn hình -->
+  <div id="fatalError"></div>
+  <div id="roomNotice" hidden></div>
+  <div id="debugPanel" hidden></div>
+  <canvas id="board"></canvas>
+  <div class="toolbar" id="toolbar">
+    <button data-tool="pen" class="active">Bút</button>
+    <button data-tool="eraser">Tẩy</button>
+    <div class="swatch active" style="background:#1B2340" data-color="#1B2340"></div>
+    <div class="swatch" style="background:#9B3232" data-color="#9B3232"></div>
+    <div class="swatch" style="background:#3F6B4A" data-color="#3F6B4A"></div>
+    <div class="swatch" style="background:#1F5C7A" data-color="#1F5C7A"></div>
+    <button id="clearBtn">Xoá</button>
+  </div>
+</div>
+
+<script>
+  // Nếu file socket.io.js không tải được (404 / server không phục vụ đúng path / mất mạng),
+  // đánh dấu lại để script chính biết ngay, thay vì chờ "typeof io" âm thầm fail.
+  window.__socketIoLoadFailed = false;
+</script>
+<script src="/socket.io/socket.io.js" onerror="window.__socketIoLoadFailed = true;"></script>
+<script>
+(function(){
+  'use strict';
+
+  const params = new URLSearchParams(location.search);
+  const room = params.get('room');
+  const board = document.getElementById('board');
+  const ctx = board.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const roomNotice = document.getElementById('roomNotice');
+  const fatalErrorEl = document.getElementById('fatalError');
+  const debugPanel = document.getElementById('debugPanel');
+  const debugToggle = document.getElementById('debugToggle');
+
+  /* ================= Chẩn đoán & báo lỗi ================= */
+  // startTime + trạng thái được gom lại để hiển thị trong bảng "Chi tiết"
+  const diag = {
+    startedAt: new Date().toISOString(),
+    pageOrigin: location.origin,
+    pageHref: location.href,
+    room: room || '(không có)',
+    socketIoScriptLoaded: null, // set bên dưới
+    socketConnected: false,
+    lastEvent: '(chưa có)',
+    lastError: '(chưa có)',
+    reconnectAttempts: 0
+  };
+
+  function renderDebug(){
+    debugPanel.textContent =
+      'Trang mở tại : ' + diag.pageHref + '\n' +
+      'Origin       : ' + diag.pageOrigin + '\n' +
+      'Room         : ' + diag.room + '\n' +
+      'socket.io.js : ' + (diag.socketIoScriptLoaded === null ? '(đang kiểm tra)' : (diag.socketIoScriptLoaded ? 'đã tải' : 'KHÔNG tải được')) + '\n' +
+      'Kết nối      : ' + (diag.socketConnected ? 'đã kết nối' : 'chưa kết nối') + '\n' +
+      'Số lần thử lại: ' + diag.reconnectAttempts + '\n' +
+      'Sự kiện cuối : ' + diag.lastEvent + '\n' +
+      'Lỗi cuối     : ' + diag.lastError + '\n' +
+      'Bắt đầu lúc  : ' + diag.startedAt;
+  }
+  debugToggle.addEventListener('click', function(){
+    debugPanel.hidden = !debugPanel.hidden;
+    if(!debugPanel.hidden) renderDebug();
+  });
+
+  // Banner đỏ cho lỗi JS chưa bắt được — đây là điểm mấu chốt để không còn "màn hình trắng trơn":
+  // thay vì trang chết lặng, người dùng sẽ luôn thấy thông báo kèm nội dung lỗi cụ thể.
+  function showFatalError(message, source){
+    diag.lastError = (source ? '[' + source + '] ' : '') + message;
+    fatalErrorEl.style.display = 'block';
+    fatalErrorEl.innerHTML = '';
+    const hdr = document.createElement('div');
+    hdr.className = 'hdr';
+    hdr.textContent = 'Đã xảy ra lỗi — trang vẫn hiển thị để bạn đọc thông tin debug bên dưới:';
+    const body = document.createElement('div');
+    body.textContent = diag.lastError + '\n(tại ' + diag.pageHref + ')';
+    fatalErrorEl.appendChild(hdr);
+    fatalErrorEl.appendChild(body);
+    statusEl.textContent = 'Lỗi';
+    statusEl.classList.add('err');
+    debugPanel.hidden = false;
+    renderDebug();
+  }
+  window.addEventListener('error', function(e){
+    showFatalError(e && e.message ? e.message : 'Lỗi không xác định', 'window.onerror');
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    const reason = e && e.reason ? (e.reason.message || String(e.reason)) : 'Promise bị từ chối không rõ lý do';
+    showFatalError(reason, 'unhandledrejection');
+  });
+
+  function showNotice(html){
+    roomNotice.hidden = false;
+    roomNotice.innerHTML = html;
+  }
+
+  if(!room){
+    showNotice('Link chưa có mã phiên (room). Hãy quét lại mã QR mới từ WriteNote trên máy tính — không tự gõ link tay.');
+    statusEl.textContent = 'Thiếu mã phiên';
+  }
+
+  let tool = 'pen';
+  let color = '#1B2340';
+  const WIDTH_PEN = 3, WIDTH_ERASER = 10;
+  let drawing = false;
+  let points = [];
+
+  function resize(){
+    const rect = board.getBoundingClientRect();
+    const img = ctx.getImageData ? safeGetImage() : null;
+    board.width = rect.width * 2;
+    board.height = rect.height * 2;
+    ctx.setTransform(2,0,0,2,0,0);
+    if(img) ctx.putImageData(img,0,0);
+  }
+  function safeGetImage(){
+    try{ return ctx.getImageData(0,0,board.width,board.height); }catch(e){ return null; }
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  document.getElementById('toolbar').addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-tool]');
+    if(btn){
+      tool = btn.dataset.tool;
+      document.querySelectorAll('button[data-tool]').forEach(b=>b.classList.toggle('active', b===btn));
+    }
+    const sw = e.target.closest('.swatch');
+    if(sw){
+      color = sw.dataset.color;
+      document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active', s===sw));
+    }
+  });
+  document.getElementById('clearBtn').addEventListener('click', ()=>{
+    ctx.clearRect(0,0,board.width,board.height);
+    if(socket && socket.connected) socket.emit('clear', {room});
+  });
+
+  function strokeStyleFor(t){
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    if(t==='eraser'){ ctx.globalCompositeOperation='destination-out'; ctx.strokeStyle='rgba(0,0,0,1)'; ctx.lineWidth=WIDTH_ERASER; }
+    else { ctx.globalCompositeOperation='source-over'; ctx.strokeStyle=color; ctx.lineWidth=WIDTH_PEN; }
+  }
+
+  function getPos(e){
+    const rect = board.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x:(t.clientX-rect.left), y:(t.clientY-rect.top) };
+  }
+
+  board.addEventListener('pointerdown', (e)=>{
+    board.setPointerCapture(e.pointerId);
+    drawing = true;
+    const p = getPos(e);
+    strokeStyleFor(tool);
+    ctx.beginPath(); ctx.moveTo(p.x,p.y);
+    const rect = board.getBoundingClientRect();
+    points = [{x:p.x/rect.width, y:p.y/rect.height}];
+  });
+  board.addEventListener('pointermove', (e)=>{
+    if(!drawing) return;
+    const p = getPos(e);
+    ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p.x,p.y);
+    const rect = board.getBoundingClientRect();
+    points.push({x:p.x/rect.width, y:p.y/rect.height});
+  });
+  function end(){
+    if(!drawing) return;
+    drawing = false;
+    if(points.length>1 && socket && socket.connected){
+      socket.emit('stroke', {room, tool, color, width: tool==='eraser'?WIDTH_ERASER:WIDTH_PEN, points});
+    }
+    points = [];
+  }
+  board.addEventListener('pointerup', end);
+  board.addEventListener('pointerleave', end);
+  board.addEventListener('pointercancel', end);
+
+  /* ---- realtime ---- */
+  diag.socketIoScriptLoaded = !window.__socketIoLoadFailed && typeof io === 'function';
+
+  let socket = null;
+  let connectTimeoutTimer = null;
+
+  if(!diag.socketIoScriptLoaded){
+    statusEl.textContent = 'Chỉ dùng ngoại tuyến';
+    statusEl.classList.add('err');
+    showNotice(
+      'Không tải được thư viện realtime (<code>/socket.io/socket.io.js</code>).<br>' +
+      'Bạn vẫn viết được trên trang này nhưng sẽ <b>không đồng bộ</b> với máy tính. Kiểm tra:' +
+      '<ul>' +
+        '<li>Server có đang chạy và có phục vụ Socket.io ở route mặc định không?</li>' +
+        '<li>Điện thoại và máy tính có đang cùng một mạng Wi-Fi/LAN không?</li>' +
+        '<li>Link QR có trỏ đúng địa chỉ IP của máy tính (không phải <code>localhost</code>) không?</li>' +
+      '</ul>'
+    );
+  } else {
+    socket = io({ reconnectionAttempts: Infinity, timeout: 8000 });
+
+    // Nếu sau 6 giây vẫn chưa kết nối được -> chủ động đưa ra gợi ý thay vì im lặng chờ mãi
+    connectTimeoutTimer = setTimeout(function(){
+      if(!diag.socketConnected){
+        showNotice(
+          'Đang mất nhiều thời gian hơn bình thường để kết nối tới máy tính. Thường là do:' +
+          '<ul>' +
+            '<li>Link QR trỏ tới <code>localhost</code>/<code>127.0.0.1</code> thay vì địa chỉ IP LAN thật của máy tính.</li>' +
+            '<li>Điện thoại và máy tính không cùng mạng Wi-Fi (ví dụ một bên đang dùng 4G/5G, hoặc mạng khách "Guest" bị cô lập).</li>' +
+            '<li>Firewall trên máy tính đang chặn kết nối đến từ thiết bị khác trên cổng này.</li>' +
+          '</ul>' +
+          'Xem mục "Chi tiết" để biết chính xác trang đang cố kết nối tới đâu.'
+        );
+        debugPanel.hidden = false;
+        renderDebug();
+      }
+    }, 6000);
+
+    socket.on('connect', ()=>{
+      diag.socketConnected = true;
+      diag.lastEvent = 'connect';
+      clearTimeout(connectTimeoutTimer);
+      statusEl.textContent = 'Đã kết nối';
+      statusEl.classList.remove('err');
+      roomNotice.hidden = true;
+      if(room) socket.emit('join-room', {room});
+      renderDebug();
+    });
+    socket.on('disconnect', (reason)=>{
+      diag.socketConnected = false;
+      diag.lastEvent = 'disconnect (' + reason + ')';
+      statusEl.textContent = 'Mất kết nối';
+      statusEl.classList.add('err');
+      renderDebug();
+    });
+    socket.on('reconnect_attempt', (n)=>{
+      diag.reconnectAttempts = n;
+      diag.lastEvent = 'reconnect_attempt #' + n;
+      statusEl.textContent = 'Đang thử kết nối lại (lần ' + n + ')...';
+      renderDebug();
+    });
+    socket.on('connect_error', (err)=>{
+      diag.lastEvent = 'connect_error';
+      diag.lastError = (err && err.message) ? err.message : String(err);
+      statusEl.textContent = 'Lỗi kết nối';
+      statusEl.classList.add('err');
+      showNotice(
+        'Không kết nối được tới máy tính (<code>' + diag.pageOrigin + '</code>).' +
+        '<ul>' +
+          '<li>Kiểm tra hai thiết bị cùng một mạng Wi-Fi.</li>' +
+          '<li>Kiểm tra địa chỉ IP trong link — không được là <code>localhost</code> hay <code>127.0.0.1</code>.</li>' +
+          '<li>Thử quét lại mã QR mới, hoặc chạm nút "Thử lại" bên dưới.</li>' +
+        '</ul>' +
+        '<button id="retryBtn" type="button" style="margin-top:6px;">Thử lại</button>'
+      );
+      const retryBtn = document.getElementById('retryBtn');
+      if(retryBtn) retryBtn.addEventListener('click', ()=>{ location.reload(); });
+      debugPanel.hidden = false;
+      renderDebug();
+    });
+
+    socket.on('request-snapshot', ({forId})=>{
+      socket.emit('snapshot-response', {forId, dataUrl: board.toDataURL()});
+    });
+    socket.on('snapshot', ({dataUrl})=>{
+      const img = new Image();
+      img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); ctx.drawImage(img,0,0,board.width/2,board.height/2); };
+      img.onerror = ()=>{ showFatalError('Không tải được ảnh snapshot từ máy tính.', 'snapshot'); };
+      img.src = dataUrl;
+    });
+    socket.on('stroke', handleRemoteStroke);
+    socket.on('shape', handleRemoteShape);
+    socket.on('text', handleRemoteText);
+    socket.on('clear', (p)=>{ if(p.room===room) ctx.clearRect(0,0,board.width,board.height); });
+  }
+
+  function handleRemoteStroke(p){
+    if(p.room!==room) return;
+    const rect = board.getBoundingClientRect();
+    ctx.save();
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.globalCompositeOperation = p.tool==='eraser' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = p.tool==='eraser' ? 'rgba(0,0,0,1)' : p.color;
+    ctx.lineWidth = p.width;
+    ctx.beginPath();
+    p.points.forEach((pt,i)=>{
+      const x = pt.x*rect.width, y = pt.y*rect.height;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+  function handleRemoteShape(p){
+    if(p.room!==room) return;
+    const rect = board.getBoundingClientRect();
+    ctx.save();
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.strokeStyle=p.color; ctx.lineWidth=p.width; ctx.globalCompositeOperation='source-over';
+    const x1=p.x1*rect.width, y1=p.y1*rect.height, x2=p.x2*rect.width, y2=p.y2*rect.height;
+    if(p.shape==='line' || p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+    else if(p.shape==='rect'){ ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1)); }
+    else if(p.shape==='ellipse'){ ctx.beginPath(); ctx.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2,Math.abs(y2-y1)/2,0,0,Math.PI*2); ctx.stroke(); }
+    else if(p.shape==='triangle'){ ctx.beginPath(); ctx.moveTo((x1+x2)/2,y1); ctx.lineTo(x1,y2); ctx.lineTo(x2,y2); ctx.closePath(); ctx.stroke(); }
+    ctx.restore();
+  }
+  function handleRemoteText(p){
+    if(p.room!==room) return;
+    const rect = board.getBoundingClientRect();
+    ctx.save();
+    ctx.fillStyle = p.color;
+    ctx.font = p.fontSize*(rect.width) + "px 'Caveat', cursive";
+    ctx.textBaseline='top';
+    const x=p.x*rect.width, y=p.y*rect.height;
+    p.text.split('\n').forEach((line,i)=>{ ctx.fillText(line, x, y+i*(p.fontSize*rect.width+4)); });
+    ctx.restore();
+  }
+})();
+</script>
+</body>
+</html>

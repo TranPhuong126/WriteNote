@@ -1,0 +1,2228 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>WriteNote — Ghi chú &amp; vẽ tay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --ink:#1B2340;
+    --ink-soft:#3B4468;
+    --paper:#FBF7EE;
+    --paper-edge:#EDE6D6;
+    --panel:#F3EEE1;
+    --accent:#3F6B4A;
+    --accent-soft:#DDE7DC;
+    --danger:#9B3232;
+    --line:rgba(27,35,64,0.10);
+    --line-strong:rgba(27,35,64,0.18);
+    --muted:#6B6F76;
+    --shadow: 0 1px 0 rgba(27,35,64,0.06);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:'Inter',system-ui,sans-serif;
+    color:var(--ink);
+    background:var(--paper-edge);
+    overflow:hidden;
+  }
+  .app{
+    display:grid;
+    grid-template-rows:56px 1fr;
+    height:100vh;
+  }
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:relative;
+    z-index:40;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:0 16px;
+    background:var(--paper-edge);
+    border-bottom:1px solid var(--line-strong);
+    min-width:0;
+    overflow:visible;
+    height:56px;
+  }
+  .wordmark{
+    font-family:'Caveat',cursive;
+    font-size:28px;
+    font-weight:700;
+    color:var(--ink);
+    letter-spacing:0.5px;
+    white-space:nowrap;
+    user-select:none;
+    flex:0 0 auto;
+  }
+  .wordmark span{color:var(--accent);}
+
+  .topbar-left{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex:1 1 auto;
+    min-width:0;
+  }
+  .zoom-control{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;white-space:nowrap;}
+  .zoom-control input{width:86px;accent-color:var(--accent);}
+  .zoom-value{width:34px;text-align:right;font-weight:700;color:var(--ink-soft);}
+
+  .menu-wrap{position:relative;flex:0 0 auto;}
+  .menu-button{
+    height:34px;
+    border:1px solid var(--line-strong);
+    background:var(--paper);
+    color:var(--ink);
+    border-radius:8px;
+    padding:0 14px;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    transition:all 0.15s ease;
+  }
+  .menu-button:hover,
+  .menu-button[aria-expanded="true"]{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+
+  .doc-select{
+    font-family:'Segoe UI','Inter',system-ui,sans-serif;
+    font-size:12px;
+    color:var(--ink);
+    background:var(--paper);
+    border:1px solid var(--line-strong);
+    border-radius:8px;
+    height:34px;
+    padding:0 10px;
+    min-width:160px;
+    max-width:200px;
+    flex:0 0 auto;
+    display:block;
+    min-width:150px;
+    font-weight:600;
+  }
+  .page-indicator{
+    font-size:12px;
+    font-weight:700;
+    color:var(--muted);
+    padding:0 8px;
+    white-space:nowrap;
+    display:block;
+    font-size:11px;
+    padding:0 4px;
+  }
+
+  .menu-panel{
+    position:absolute;
+    top:42px;
+    left:0;
+    min-width:210px;
+    background:var(--paper);
+    border:1px solid var(--line-strong);
+    border-radius:10px;
+    box-shadow:0 12px 28px rgba(27,35,64,0.12);
+    display:none;
+    z-index:30;
+    overflow:hidden;
+  }
+  .menu-panel.open{display:block;}
+  .menu-item{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    width:100%;
+    background:transparent;
+    border:none;
+    color:var(--ink);
+    padding:10px 12px;
+    font-size:13px;
+    text-align:left;
+    cursor:pointer;
+    border-bottom:1px solid var(--line);
+  }
+  .menu-item:last-child{border-bottom:none;}
+  .menu-item:hover{background:var(--panel);}
+  .menu-item.danger{color:var(--danger);}
+  .menu-item small{color:var(--muted);font-size:11px;}
+  .file-list-title{
+    padding:9px 12px 5px;
+    color:var(--muted);
+    font-size:11px;
+    font-weight:700;
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+    border-top:1px solid var(--line);
+  }
+  .file-list{max-height:180px;overflow:auto;}
+  .file-option{
+    display:block;
+    width:100%;
+    border:0;
+    background:transparent;
+    color:var(--ink);
+    padding:8px 12px 8px 20px;
+    text-align:left;
+    font-size:12px;
+    cursor:pointer;
+  }
+  .file-option:hover,.file-option.active{background:var(--accent-soft);color:var(--accent);font-weight:700;}
+
+  .topbar-actions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex:0 0 auto;
+  }
+  .btn{
+    font-family:'Segoe UI','Inter',system-ui,sans-serif;
+    font-size:13px;
+    font-weight:600;
+    letter-spacing:0.01em;
+    padding:8px 14px;
+    border-radius:8px;
+    border:1px solid var(--line-strong);
+    background:var(--paper);
+    color:var(--ink);
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .btn:hover{border-color:var(--accent);color:var(--accent);}
+  .btn.primary{
+    background:var(--accent);
+    color:#fff;
+    border-color:var(--accent);
+  }
+  .btn.primary:hover{opacity:0.9;color:#fff;}
+  .btn.danger{
+    background:#d84d4d;
+    color:#fff;
+    border-color:#d84d4d;
+  }
+  .btn.danger:hover{opacity:0.9;color:#fff;border-color:#d84d4d;}
+
+  /* ---------- Body layout ---------- */
+  .body{
+    display:grid;
+    grid-template-columns:56px 1fr 220px;
+    height:100%;
+    min-height:0;
+  }
+  .body.panel-collapsed{
+    grid-template-columns:56px 1fr 0;
+  }
+
+  /* ---------- Left toolbar ---------- */
+  .body.toolbar-collapsed{
+    grid-template-columns:48px 1fr 220px;
+  }
+  .body.toolbar-collapsed.panel-collapsed{
+    grid-template-columns:48px 1fr 0;
+  }
+  .toolbar{
+    background:var(--paper-edge);
+    border-right:1px solid var(--line-strong);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:10px 0;
+    gap:6px;
+    transition:all 0.18s ease;
+    overflow:hidden;
+  }
+  .toolbar.collapsed{
+    padding-left:0;
+    padding-right:0;
+  }
+  .toolbar.collapsed .tool,
+  .toolbar.collapsed .sep,
+  .toolbar.collapsed .tool-label{
+    opacity:0;
+    pointer-events:none;
+    width:0;
+    margin:0;
+    padding:0;
+    border-width:0;
+    overflow:hidden;
+  }
+  .tool-toggle,
+  .panel-toggle{
+    width:32px;height:32px;border-radius:8px;border:1px solid var(--line-strong);background:var(--paper);color:var(--ink-soft);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:0 0 auto;margin-bottom:4px;
+  }
+  .tool-toggle:hover,
+  .panel-toggle:hover{border-color:var(--accent);color:var(--accent);}
+  .tool{
+    width:38px;height:38px;
+    border-radius:9px;
+    border:1px solid transparent;
+    background:transparent;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+    color:var(--ink-soft);
+    transition:all 0.15s ease;
+  }
+  .tool svg{width:19px;height:19px;}
+  .tool:hover{background:var(--panel);}
+  .tool.active{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);}
+  .sep{width:26px;height:1px;background:var(--line-strong);margin:6px 0;}
+
+  /* ---------- Canvas area ---------- */
+  .stage{
+    position:relative;
+    overflow:auto;
+    background:var(--paper-edge);
+    padding:18px 0 28px;
+  }
+  .document-stack{
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:10px;
+    padding:8px 0 40px;
+  }
+  .page-wrap{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:4px;
+    width:100%;
+  }
+  .page-label{
+    width:595px;
+    text-align:left;
+    font-size:12px;
+    color:var(--muted);
+    font-weight:600;
+    letter-spacing:0.03em;
+    padding:0 2px;
+    display:none;
+  }
+  .page-sheet{
+    position:relative;
+    width:calc(min(520px,calc(100vw - 240px)) * var(--zoom, 1));
+    aspect-ratio:595 / 842;
+    height:auto;
+    box-shadow:0 2px 14px rgba(27,35,64,0.12), var(--shadow);
+    flex:none;
+    border:1px solid rgba(27,35,64,0.06);
+    background:var(--paper);
+  }
+  .page-sheet.active{box-shadow:0 2px 18px rgba(63,107,74,0.18), var(--shadow);}
+  .page-sheet::after{
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:-12px;
+    height:1px;
+    border-bottom:1px dashed rgba(27,35,64,0.28);
+  }
+  .page-sheet:last-child::after{display:none;}
+  .page-bg{
+    position:absolute;
+    top:0;left:0;
+    width:100%;height:100%;
+    background-color:var(--page-paper, var(--paper));
+    pointer-events:none;
+    display:block;
+    z-index:0;
+  }
+  .page-bg.bg-ruled{ background-image: repeating-linear-gradient(var(--page-paper) 0 calc(31px * var(--zoom, 1)), var(--line) calc(31px * var(--zoom, 1)) calc(32px * var(--zoom, 1))); }
+  .page-bg.bg-grid{ background-image: repeating-linear-gradient(var(--line) 0 1px, transparent 1px calc(28px * var(--zoom, 1))), repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px calc(28px * var(--zoom, 1))); }
+  .page-bg.bg-dot{ background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size:calc(22px * var(--zoom, 1)) calc(22px * var(--zoom, 1)); }
+  .page-bg.bg-blank{ background-image:none; }
+  .page-sheet canvas{
+    position:absolute;
+    top:0;left:0;
+    width:100%;height:100%;
+    display:block;
+    background:transparent;
+    pointer-events:auto;
+    touch-action:none;
+    cursor:crosshair;
+    z-index:1;
+  }
+  .page-elements{
+    position:absolute;
+    inset:0;
+    z-index:4;
+    pointer-events:none;
+    display:block;
+    visibility:visible;
+  }
+  .page-element{
+    position:absolute;
+    min-width:40px;
+    min-height:28px;
+    pointer-events:auto;
+    border:1px dashed transparent;
+    resize:both;
+    overflow:hidden;
+    cursor:move;
+    user-select:none;
+  }
+  .page-element.selected{border-color:var(--accent);}
+  .page-element img{display:block;visibility:visible;opacity:1;width:100%;height:100%;object-fit:fill;pointer-events:none;user-select:none;}
+  .page-element.text-element{
+    height:auto;
+    min-height:36px;
+    padding:8px 10px;
+    color:var(--ink);
+    background:rgba(255,255,255,0.78);
+    white-space:pre-wrap;
+    word-break:break-word;
+    font-family:'Segoe UI','Inter',system-ui,sans-serif;
+    line-height:1.35;
+    overflow:visible;
+  }
+  .element-delete{
+    position:absolute;
+    top:3px;
+    right:3px;
+    width:20px;
+    height:20px;
+    padding:0;
+    border:2px solid #fff;
+    border-radius:50%;
+    background:#c93838;
+    color:#fff;
+    font-size:14px;
+    line-height:15px;
+    cursor:pointer;
+    display:none;
+    z-index:3;
+  }
+  .page-element.selected .element-delete{display:block;}
+
+  .text-editor{
+    position:absolute;
+    font-family:'Segoe UI','Inter',system-ui,sans-serif;
+    background:rgba(255,255,255,0.55);
+    border:1px dashed var(--accent);
+    outline:none;
+    color:var(--ink);
+    padding:2px 4px;
+    min-width:60px;
+    resize:both;
+    overflow:hidden;
+    z-index:5;
+    white-space:pre-wrap;
+  }
+
+  /* ---------- Right panel ---------- */
+  .panel{
+    position:relative;
+    background:var(--paper-edge);
+    border-left:1px solid var(--line-strong);
+    padding:10px 10px;
+    overflow-y:hidden;
+    overflow-x:hidden;
+    transition:all 0.2s ease;
+  }
+  .panel.collapsed{
+    width:0;
+    min-width:0;
+    max-width:0;
+    padding:0;
+    border-left:none;
+    overflow:hidden;
+    opacity:0;
+    pointer-events:none;
+  }
+  .panel h4{
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--muted);
+    margin:0 0 6px;
+    font-weight:600;
+  }
+  .panel section{margin-bottom:9px;}
+  .swatches{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:4px;
+  }
+  .swatch{
+    width:100%;
+    aspect-ratio:1;
+    border-radius:5px;
+    border:2px solid var(--line-strong);
+    cursor:pointer;
+  }
+  .swatch.active{border-color:var(--ink);}
+  .color-custom{
+    margin-top:5px;
+    width:100%;
+    height:24px;
+    border:1px solid var(--line-strong);
+    border-radius:7px;
+    padding:2px;
+    background:var(--paper);
+    cursor:pointer;
+  }
+  .slider-row{display:flex;align-items:center;gap:6px;}
+  input[type=range]{flex:1;accent-color:var(--accent);}
+  .slider-val{font-size:12px;color:var(--muted);width:26px;text-align:right;}
+  .stroke-preview{
+    height:26px;
+    border-radius:7px;
+    background:var(--paper);
+    border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;
+    margin-top:5px;
+  }
+  .stroke-preview .dot{border-radius:50%;background:var(--ink);}
+  .bg-select{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:4px;
+  }
+  .bg-opt{
+    border:1px solid var(--line-strong);
+    border-radius:6px;
+    padding:6px 4px;
+    font-size:11px;
+    text-align:center;
+    cursor:pointer;
+    color:var(--muted);
+    background:var(--paper);
+  }
+  .bg-opt.active{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .text-format-panel{display:grid;gap:5px;}
+  .text-format-panel.visible{display:grid;}
+  .text-format-row{display:flex;align-items:center;gap:4px;}
+  .text-format-panel select,.text-format-panel input[type=number]{height:25px;min-width:0;border:1px solid var(--line-strong);border-radius:5px;background:var(--paper);color:var(--ink);font-size:11px;padding:2px 4px;}
+  .text-format-panel select{flex:1;}
+  .text-format-panel input[type=number]{width:45px;text-align:center;}
+  .format-btn{width:26px;height:25px;padding:0;border:1px solid var(--line-strong);border-radius:5px;background:var(--paper);color:var(--ink);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .format-btn:hover,.format-btn.active{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);}
+  .format-color{width:28px;height:25px;padding:2px;border:1px solid var(--line-strong);border-radius:5px;background:var(--paper);cursor:pointer;}
+  .text-content{display:block;min-height:1em;outline:none;cursor:text;white-space:inherit;}
+
+  .hint{
+    font-size:11.5px;
+    color:var(--muted);
+    line-height:1.5;
+    padding-top:6px;
+    border-top:1px solid var(--line);
+  }
+
+  /* ---------- Modal ---------- */
+  .modal-overlay{
+    position:fixed;inset:0;
+    background:rgba(27,35,64,0.35);
+    display:none;
+    align-items:center;justify-content:center;
+    z-index:50;
+  }
+  .modal{
+    position:fixed;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%);
+    background:var(--paper);
+    border:1px solid var(--line-strong);
+    border-radius:12px;
+    padding:22px 20px 18px;
+    width:280px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    align-items:stretch;
+    text-align:left;
+    box-shadow:0 8px 30px rgba(27,35,64,0.25);
+  }
+  .modal h3{margin:0 0 6px;text-align:center;font-family:'Segoe UI','Inter',system-ui,sans-serif;font-size:22px;font-weight:700;letter-spacing:0.01em;}
+  .modal label{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.04em;}
+  .modal input[type=text]{padding:8px 10px;border:1px solid var(--line-strong);border-radius:7px;font-size:13px;font-family:'Inter',sans-serif;}
+  .conn-status{font-size:12px;color:var(--accent);font-weight:600;}
+  #qrCanvas{align-self:center;width:220px;height:220px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;}
+  #qrCanvas img,#qrCanvas canvas{display:block;width:220px;height:220px;}
+  .modal .hint{border-top:none;padding-top:0;}
+  .modal-actions{display:flex;gap:8px;}
+  .modal-actions .btn{flex:1;justify-content:center;}
+  .modal > .hint{text-align:center;margin:2px 0 4px;}
+  .modal > #closeModal{justify-content:center;}
+  .modal.hidden-advanced .advanced{display:none;}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="topbar">
+    <div class="wordmark">Write<span>Note</span></div>
+    <div class="topbar-left">
+      <div class="menu-wrap">
+        <button class="menu-button" id="fileMenuBtn" aria-expanded="false">Tệp</button>
+        <div class="menu-panel" id="fileMenuPanel">
+          <button class="menu-item" id="newDocBtn"><span>Thêm file</span><small>Ctrl+N</small></button>
+          <button class="menu-item" id="duplicateDocBtn"><span>Bản sao</span><small>Ctrl+D</small></button>
+          <button class="menu-item" id="exportPdf"><span>Xuất file PDF</span></button>
+          <button class="menu-item danger" id="deleteDocBtn"><span>Xóa</span></button>
+          <div class="file-list-title">Danh sách file / Chuyển file</div>
+          <div class="file-list" id="fileList"></div>
+        </div>
+      </div>
+      <div class="menu-wrap">
+        <button class="menu-button" id="editMenuBtn" aria-expanded="false">Chỉnh sửa</button>
+        <div class="menu-panel" id="editMenuPanel">
+          <button class="menu-item" id="addPageBtn"><span>Thêm trang</span></button>
+          <button class="menu-item danger" id="clearContentBtn"><span>Xóa nội dung</span></button>
+          <button class="menu-item danger" id="deletePageBtn"><span>Xóa trang</span></button>
+        </div>
+      </div>
+      <select class="doc-select" id="docSelect" aria-label="Chọn tài liệu"></select>
+      <div class="page-indicator" id="pageIndicator">Trang 1 / 1</div>
+      <button class="tool-toggle" id="toolbarToggle" title="Thu gọn thanh công cụ">⟨</button>
+      <button class="panel-toggle" id="panelToggle" title="Thu gọn cài đặt">⟩</button>
+      <label class="zoom-control" title="Thu phóng tài liệu">
+        <span>Zoom</span>
+        <input type="range" id="zoomRange" min="10" max="200" step="5" value="100">
+        <span class="zoom-value" id="zoomValue">100%</span>
+      </label>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn primary" id="linkBtn">Liên kết điện thoại</button>
+    </div>
+  </div>
+
+  <div class="body" id="mainBody">
+    <div class="toolbar" id="toolbar">
+      <button class="tool active" data-tool="pen" title="Bút (P)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/><path d="M14 6l4 4"/></svg>
+      </button>
+      <button class="tool" data-tool="eraser" title="Tẩy (E)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 20H8l-5-5a2 2 0 010-2.8L12 3.4a2 2 0 012.8 0l6 6a2 2 0 010 2.8L14 19"/></svg>
+      </button>
+      <div class="sep"></div>
+      <button class="tool" data-tool="line" title="Đường thẳng (L)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20L20 4"/></svg>
+      </button>
+      <button class="tool" data-tool="arrow" title="Mũi tên (A)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20L20 4M20 4H11M20 4V13"/></svg>
+      </button>
+      <button class="tool" data-tool="rect" title="Hình chữ nhật (R)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+      </button>
+      <button class="tool" data-tool="ellipse" title="Hình tròn/elip (O)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg>
+      </button>
+      <button class="tool" data-tool="triangle" title="Tam giác (T)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4l9 16H3z"/></svg>
+      </button>
+      <div class="sep"></div>
+      <button class="tool" data-tool="text" title="Văn bản (X)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M12 6v14"/></svg>
+      </button>
+      <button class="tool" data-tool="cursor" title="Con trỏ / di chuyển hình ảnh">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4l11 7-5 1-1 5-5-13z"/><path d="M10 11l6 6"/></svg>
+      </button>
+      <div class="sep"></div>
+      <button class="tool" id="undoBtn" title="Hoàn tác (Ctrl+Z)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 7L4 12l5 5M4 12h11a5 5 0 010 10h-1"/></svg>
+      </button>
+      <button class="tool" id="redoBtn" title="Làm lại (Ctrl+Y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7l5 5-5 5M20 12H9a5 5 0 000 10h1"/></svg>
+      </button>
+    </div>
+
+    <div class="stage" id="stageWrap">
+      <div class="document-stack" id="documentStack"></div>
+    </div>
+
+    <div class="panel" id="settingsPanel">
+      <section>
+        <h4>Màu mực</h4>
+        <div class="swatches" id="swatches"></div>
+        <input type="color" class="color-custom" id="customColor" value="#1B2340">
+      </section>
+      <section>
+        <h4>Độ dày nét</h4>
+        <div class="slider-row">
+          <input type="range" id="strokeRange" min="1" max="24" value="3">
+          <span class="slider-val" id="strokeVal">3</span>
+        </div>
+        <div class="stroke-preview"><div class="dot" id="strokeDot" style="width:3px;height:3px;"></div></div>
+      </section>
+      <section class="text-format-panel" id="textFormatPanel">
+        <h4>Định dạng văn bản</h4>
+        <div class="text-format-row">
+          <select id="fontFamilySelect" aria-label="Font chữ">
+            <option value="Segoe UI">Segoe UI</option>
+            <option value="Arial">Arial</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Verdana">Verdana</option>
+            <option value="Courier New">Courier New</option>
+          </select>
+          <button class="format-btn" id="fontSizeDown" type="button" title="Giảm cỡ chữ">-</button>
+          <input id="fontSizeInput" type="number" min="8" max="120" value="28" aria-label="Cỡ chữ">
+          <button class="format-btn" id="fontSizeUp" type="button" title="Tăng cỡ chữ">+</button>
+        </div>
+        <div class="text-format-row">
+          <button class="format-btn" data-format="bold" type="button" title="Đậm">B</button>
+          <button class="format-btn" data-format="italic" type="button" title="Nghiêng"><i>I</i></button>
+          <button class="format-btn" data-format="underline" type="button" title="Gạch chân"><u>U</u></button>
+          <input class="format-color" id="textColorInput" type="color" value="#1B2340" title="Màu chữ">
+          <input class="format-color" id="textHighlightInput" type="color" value="#FFF2A8" title="Màu highlight">
+        </div>
+        <div class="text-format-row">
+          <button class="format-btn" data-align="left" type="button" title="Căn trái">L</button>
+          <button class="format-btn" data-align="center" type="button" title="Căn giữa">C</button>
+          <button class="format-btn" data-align="right" type="button" title="Căn phải">R</button>
+          <button class="format-btn" data-align="justify" type="button" title="Căn đều">J</button>
+        </div>
+      </section>
+      <section>
+        <h4>Kiểu nền</h4>
+        <div class="bg-select" id="bgSelect">
+          <div class="bg-opt active" data-bg="ruled">Kẻ ngang</div>
+          <div class="bg-opt" data-bg="grid">Ô vuông</div>
+          <div class="bg-opt" data-bg="dot">Chấm bi</div>
+          <div class="bg-opt" data-bg="blank">Trơn</div>
+        </div>
+      </section>
+      <section>
+        <h4>Màu nền trang</h4>
+        <div class="swatches" id="bgSwatches"></div>
+        <input type="color" class="color-custom" id="pageBgColorCustom" value="#FBF7EE">
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="linkModalOverlay">
+  <div class="modal hidden-advanced">
+    <h3>Liên kết điện thoại</h3>
+    <div class="advanced">
+      <div style="font-size:12.5px;color:var(--muted);">Trang: <b id="linkPageName">—</b></div>
+      <label>Địa chỉ máy chủ đồng bộ</label>
+      <input type="text" id="serverAddr" value="http://localhost:3001">
+      <label>Link trực tiếp</label>
+      <input type="text" id="directLink" readonly>
+      <div class="modal-actions">
+        <button class="btn primary" id="connectBtn">Kết nối</button>
+        <button class="btn" id="copyLinkBtn">Copy link</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="openLinkBtn">Mở trang</button>
+      </div>
+      <div class="conn-status" id="connStatus">Chưa kết nối</div>
+    </div>
+    <div id="qrCanvas" aria-label="Mã QR liên kết điện thoại"></div>
+    <p class="hint">Quét mã QR để mở trang trên điện thoại.</p>
+    <button class="btn" id="closeModal">Đóng</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const documentStackEl = document.getElementById('documentStack');
+  const swatchesEl = document.getElementById('swatches');
+  const bgSwatchesEl = document.getElementById('bgSwatches');
+  const bgSelect = document.getElementById('bgSelect');
+
+  const PALETTE = ['#1B2340','#9B3232','#3F6B4A','#1F5C7A','#8A5A1E','#000000'];
+  const BG_PALETTE = ['#FFFFFF','#FBF7EE','#F2F2F2','#EAF3EC','#FDF3E4','#FDECEC'];
+  const STORE_KEY = 'writenote-notes-v2';
+  const PAGE_WIDTH = 1190;
+  const PAGE_HEIGHT = 1684;
+
+  let board = null;
+  let ctx = null;
+  let state = loadState();
+  const defaultTextFormat = {fontFamily:'Segoe UI', fontSize:28, bold:false, italic:false, underline:false, color:'#1B2340', highlight:'transparent', align:'left'};
+  state.textFormat = Object.assign({}, defaultTextFormat, state.textFormat || {});
+  let activeTextEditor = null;
+  let activeTextSelection = null;
+
+  function createBlankPage(name){
+    return { id: cryptoId(), name: name || 'Trang 1', data: null, elements: [], bg: 'ruled', bgColor: '#FBF7EE' };
+  }
+
+  function normalizePageNames(doc){
+    doc.pages.forEach((page, idx)=>{
+      page.name = 'Trang ' + (idx + 1);
+    });
+  }
+
+  function createDocument(name, pageName){
+    return {
+      id: cryptoId(),
+      name: name || 'Tài liệu 1',
+      pages: [createBlankPage(pageName || 'Trang 1')],
+      currentPage: 0
+    };
+  }
+
+  function normalizeLegacyState(parsed){
+    const legacyPages = Array.isArray(parsed.pages) && parsed.pages.length ? parsed.pages : [createBlankPage('Trang 1')];
+    const legacyCurrent = Number.isInteger(parsed.current) ? parsed.current : 0;
+    return {
+      documents: [{
+        id: cryptoId(),
+        name: 'Tài liệu 1',
+        pages: legacyPages.map((p, idx)=>({
+          id: p.id || cryptoId(),
+          name: p.name || 'Trang ' + (idx + 1),
+          data: p.data || null,
+          elements: Array.isArray(p.elements) ? p.elements : [],
+          bg: p.bg || 'ruled',
+          bgColor: p.bgColor || '#FBF7EE'
+        })),
+        currentPage: Math.min(legacyCurrent, Math.max(legacyPages.length - 1, 0))
+      }],
+      currentDoc: 0,
+      color: parsed.color || '#1B2340',
+      stroke: parsed.stroke || 3
+    };
+  }
+
+  function loadState(){
+    try{
+      const raw = localStorage.getItem(STORE_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        if(Array.isArray(parsed.documents) && parsed.documents.length){
+          parsed.documents.forEach(doc => {
+            if(!Array.isArray(doc.pages) || !doc.pages.length) doc.pages = [createBlankPage('Trang 1')];
+            doc.pages.forEach((p, idx)=>{ if(!p.bgColor) p.bgColor = '#FBF7EE'; if(!p.bg) p.bg='ruled'; if(!p.name) p.name = 'Trang ' + (idx + 1); if(!Array.isArray(p.elements)) p.elements = []; });
+            if(!Number.isInteger(doc.currentPage) || doc.currentPage < 0) doc.currentPage = 0;
+            if(doc.currentPage >= doc.pages.length) doc.currentPage = doc.pages.length - 1;
+          });
+          return parsed;
+        }
+        return normalizeLegacyState(parsed);
+      }
+    }catch(e){}
+    return {
+      documents:[createDocument('Tài liệu 1', 'Trang 1')],
+      currentDoc:0,
+      color:'#1B2340',
+      stroke:3
+    };
+  }
+  function saveState(){
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+  }
+  function cryptoId(){ return Math.random().toString(36).slice(2,10); }
+
+  let tool = 'pen';
+  let drawing = false;
+  let startX=0, startY=0;
+  let history = [];
+  let historyIndex = -1;
+  let snapshotBeforeShape = null;
+  let currentStrokePoints = [];
+  let lastPastedImage = null;
+  let imageDrag = null;
+  let lastPagePointer = null;
+
+  function currentDocument(){ return state.documents[state.currentDoc] || state.documents[0]; }
+  function currentPage(){ return currentDocument().pages[currentDocument().currentPage] || currentDocument().pages[0]; }
+
+  function renderSwatches(){
+    swatchesEl.innerHTML = '';
+    PALETTE.forEach(c=>{
+      const d = document.createElement('div');
+      d.className = 'swatch' + (state.color===c ? ' active':'');
+      d.style.background = c;
+      d.addEventListener('click', ()=>{ state.color=c; document.getElementById('customColor').value=c; renderSwatches(); saveState(); });
+      swatchesEl.appendChild(d);
+    });
+  }
+
+  function renderBgSwatches(){
+    bgSwatchesEl.innerHTML = '';
+    const active = currentPage().bgColor;
+    BG_PALETTE.forEach(c=>{
+      const d = document.createElement('div');
+      d.className = 'swatch' + (active===c ? ' active':'');
+      d.style.background = c;
+      d.addEventListener('click', ()=>{
+        currentPage().bgColor = c;
+        document.getElementById('pageBgColorCustom').value = c;
+        applyBgClass(); renderBgSwatches(); saveState();
+      });
+      bgSwatchesEl.appendChild(d);
+    });
+  }
+
+  function renderDocSelect(){
+    const docSelect = document.getElementById('docSelect');
+    const fileList = document.getElementById('fileList');
+    docSelect.innerHTML = '';
+    fileList.innerHTML = '';
+    state.documents.forEach((doc, i)=>{
+      const option = document.createElement('option');
+      option.value = i;
+      option.textContent = doc.name;
+      if(i === state.currentDoc) option.selected = true;
+      docSelect.appendChild(option);
+
+      const fileOption = document.createElement('button');
+      fileOption.type = 'button';
+      fileOption.className = 'file-option' + (i === state.currentDoc ? ' active' : '');
+      fileOption.textContent = doc.name;
+      fileOption.addEventListener('click', ()=>{
+        closeMenus();
+        switchToDocument(i);
+      });
+      fileList.appendChild(fileOption);
+    });
+  }
+
+  function closeMenus(){
+    document.querySelectorAll('.menu-panel').forEach(panel => panel.classList.remove('open'));
+    document.querySelectorAll('.menu-button').forEach(button => button.setAttribute('aria-expanded', 'false'));
+  }
+
+  function insertPageAfterCurrent(){
+    const doc = currentDocument();
+    const nextIndex = doc.currentPage + 1;
+    const newPage = createBlankPage('Trang ' + (doc.pages.length + 1));
+    doc.pages.splice(nextIndex, 0, newPage);
+    normalizePageNames(doc);
+    doc.currentPage = nextIndex;
+    saveState();
+    renderDocumentStack();
+    renderBgSwatches();
+    history = [board.toDataURL()];
+    historyIndex = 0;
+    if(socket && socket.connected) joinRoom(currentPage().id);
+  }
+
+  function updatePageIndicator(){
+    const doc = currentDocument();
+    const el = document.getElementById('pageIndicator');
+    if(el){ el.textContent = 'Trang ' + (doc.currentPage + 1) + ' / ' + doc.pages.length; }
+  }
+
+  function drawStoredDrawing(context, image){
+    const offscreen = document.createElement('canvas');
+    offscreen.width = PAGE_WIDTH;
+    offscreen.height = PAGE_HEIGHT;
+    const offscreenContext = offscreen.getContext('2d');
+    offscreenContext.drawImage(image, 0, 0, PAGE_WIDTH, PAGE_HEIGHT);
+    const pixels = offscreenContext.getImageData(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
+    for(let i = 0; i < pixels.data.length; i += 4){
+      const red = pixels.data[i];
+      const green = pixels.data[i + 1];
+      const blue = pixels.data[i + 2];
+      const brightest = Math.max(red, green, blue);
+      const darkest = Math.min(red, green, blue);
+      if(brightest > 145 && brightest - darkest < 90){
+        pixels.data[i + 3] = 0;
+      }
+    }
+    offscreenContext.putImageData(pixels, 0, 0);
+    context.drawImage(offscreen, 0, 0);
+  }
+
+  function renderPageElements(page, container){
+    container.innerHTML = '';
+    (page.elements || []).forEach(element=>{
+      const elementEl = document.createElement('div');
+      elementEl.className = 'page-element' + (element.type === 'text' ? ' text-element' : '');
+      elementEl.dataset.id = element.id;
+      elementEl.style.left = (element.x * 100) + '%';
+      elementEl.style.top = (element.y * 100) + '%';
+      elementEl.style.width = (element.width * 100) + '%';
+      if(element.type !== 'text') elementEl.style.height = (element.height * 100) + '%';
+      if(element.type === 'text'){
+        const textContent = document.createElement('span');
+        textContent.className = 'text-content';
+        textContent.contentEditable = 'true';
+        textContent.spellcheck = false;
+        textContent.textContent = element.text;
+        textContent.addEventListener('pointerdown', event=>event.stopPropagation());
+        textContent.addEventListener('input', ()=>{
+          element.text = textContent.textContent;
+          saveState();
+        });
+        elementEl.appendChild(textContent);
+        elementEl.style.fontSize = ((element.fontSize || 28) * (window.writeNoteZoom || 1)) + 'px';
+        elementEl.style.fontFamily = element.fontFamily || 'Segoe UI';
+        elementEl.style.fontWeight = element.bold ? '700' : '400';
+        elementEl.style.fontStyle = element.italic ? 'italic' : 'normal';
+        elementEl.style.textDecoration = element.underline ? 'underline' : 'none';
+        elementEl.style.textAlign = element.align || 'left';
+        elementEl.style.color = element.color || state.color;
+        elementEl.style.backgroundColor = element.highlight || 'rgba(255,255,255,0.78)';
+      } else {
+        const image = document.createElement('img');
+        image.src = element.src;
+        image.alt = 'Ảnh đã dán';
+        elementEl.appendChild(image);
+      }
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.contentEditable = 'false';
+      deleteButton.className = 'element-delete';
+      deleteButton.textContent = '×';
+      deleteButton.title = 'Xóa đối tượng';
+      deleteButton.addEventListener('pointerdown', event=>event.stopPropagation());
+      deleteButton.addEventListener('click', event=>{
+        event.stopPropagation();
+        page.elements = page.elements.filter(item=>item.id !== element.id);
+        saveState();
+        renderPageElements(page, container);
+      });
+      elementEl.appendChild(deleteButton);
+
+      let drag = null;
+      elementEl.addEventListener('pointerdown', event=>{
+        if(event.target === deleteButton) return;
+        event.stopPropagation();
+        elementEl.classList.add('selected');
+        const sheet = container.parentElement;
+        const rect = sheet.getBoundingClientRect();
+        const elementRect = elementEl.getBoundingClientRect();
+        const resizing = event.clientX >= elementRect.right - 20 && event.clientY >= elementRect.bottom - 20;
+        if(resizing) return;
+        drag = {startX:event.clientX, startY:event.clientY, x:element.x, y:element.y, rect};
+        elementEl.setPointerCapture(event.pointerId);
+      });
+      elementEl.addEventListener('click', event=>{
+        event.stopPropagation();
+        document.querySelectorAll('.page-element.selected').forEach(selected=>{
+          if(selected !== elementEl) selected.classList.remove('selected');
+        });
+        elementEl.classList.add('selected');
+        if(element.type === 'text'){
+          activeTextSelection = {element, elementEl};
+          syncTextFormatControls(element);
+          updateTextFormatVisibility();
+        } else {
+          activeTextSelection = null;
+          updateTextFormatVisibility();
+        }
+      });
+      elementEl.addEventListener('pointermove', event=>{
+        if(!drag) return;
+        const nextX = drag.x + (event.clientX - drag.startX) / drag.rect.width;
+        const nextY = drag.y + (event.clientY - drag.startY) / drag.rect.height;
+        element.x = Math.max(0, Math.min(1 - element.width, nextX));
+        element.y = Math.max(0, Math.min(1 - element.height, nextY));
+        elementEl.style.left = (element.x * 100) + '%';
+        elementEl.style.top = (element.y * 100) + '%';
+      });
+      elementEl.addEventListener('pointerup', ()=>{
+        drag = null;
+        element.width = Math.max(0.03, elementEl.offsetWidth / container.parentElement.clientWidth);
+        element.height = Math.max(0.03, elementEl.offsetHeight / container.parentElement.clientHeight);
+        element.x = Math.min(element.x, 1 - element.width);
+        element.y = Math.min(element.y, 1 - element.height);
+        saveState();
+      });
+      if(window.ResizeObserver){
+        const resizeObserver = new ResizeObserver(()=>{
+          element.width = Math.max(0.03, elementEl.offsetWidth / container.parentElement.clientWidth);
+          element.height = Math.max(0.03, elementEl.offsetHeight / container.parentElement.clientHeight);
+          element.x = Math.min(element.x, 1 - element.width);
+          element.y = Math.min(element.y, 1 - element.height);
+          saveState();
+        });
+        resizeObserver.observe(elementEl);
+      }
+      container.appendChild(elementEl);
+    });
+  }
+
+  function clearElementSelection(){
+    document.querySelectorAll('.page-element.selected').forEach(element=>element.classList.remove('selected'));
+    activeTextSelection = null;
+    updateTextFormatVisibility();
+  }
+
+  function updateTextFormatVisibility(){
+    const panel = document.getElementById('textFormatPanel');
+    const textToolActive = tool === 'text';
+    panel.classList.toggle('visible', textToolActive || Boolean(activeTextSelection) || Boolean(activeTextEditor));
+  }
+
+  function syncTextFormatControls(formatSource){
+    const format = Object.assign({}, state.textFormat, formatSource || {});
+    document.getElementById('fontFamilySelect').value = format.fontFamily;
+    document.getElementById('fontSizeInput').value = format.fontSize;
+    document.getElementById('textColorInput').value = format.color;
+    document.getElementById('textHighlightInput').value = format.highlight && format.highlight[0] === '#' ? format.highlight : '#FFF2A8';
+    document.querySelectorAll('[data-format]').forEach(button=>button.classList.toggle('active', Boolean(format[button.dataset.format])));
+    document.querySelectorAll('[data-align]').forEach(button=>button.classList.toggle('active', button.dataset.align === format.align));
+  }
+
+  function applyTextFormat(patch){
+    state.textFormat = Object.assign({}, state.textFormat, patch);
+    const format = state.textFormat;
+    if(activeTextEditor){
+      activeTextEditor.style.fontFamily = format.fontFamily;
+      activeTextEditor.style.fontSize = (format.fontSize * (board.getBoundingClientRect().width / board.width)) + 'px';
+      activeTextEditor.style.fontWeight = format.bold ? '700' : '400';
+      activeTextEditor.style.fontStyle = format.italic ? 'italic' : 'normal';
+      activeTextEditor.style.textDecoration = format.underline ? 'underline' : 'none';
+      activeTextEditor.style.color = format.color;
+      activeTextEditor.style.backgroundColor = format.highlight;
+      activeTextEditor.style.textAlign = format.align;
+    }
+    if(activeTextSelection){
+      const element = activeTextSelection.element;
+      Object.assign(element, {fontFamily:format.fontFamily, fontSize:format.fontSize, bold:format.bold, italic:format.italic, underline:format.underline, color:format.color, highlight:format.highlight, align:format.align});
+      const container = activeTextSelection.elementEl.parentElement;
+      renderPageElements(currentPage(), container);
+      const selected = Array.from(container.children).find(child=>child.dataset.id === element.id);
+      if(selected){
+        selected.classList.add('selected');
+        activeTextSelection.elementEl = selected;
+      }
+    }
+    syncTextFormatControls(format);
+    saveState();
+  }
+
+  function addPageElement(element){
+    const page = currentPage();
+    if(!Array.isArray(page.elements)) page.elements = [];
+    page.elements.push(element);
+    saveState();
+    const container = document.querySelector('.page-sheet.active .page-elements');
+    if(container) renderPageElements(page, container);
+  }
+
+  function renderDocumentStack(){
+    const doc = currentDocument();
+    normalizePageNames(doc);
+    documentStackEl.innerHTML = '';
+    doc.pages.forEach((page, idx)=>{
+      const wrap = document.createElement('div');
+      wrap.className = 'page-wrap';
+      const label = document.createElement('div');
+      label.className = 'page-label';
+      label.textContent = page.name;
+      wrap.appendChild(label);
+
+      const sheetEl = document.createElement('div');
+      sheetEl.className = 'page-sheet' + (idx === doc.currentPage ? ' active' : '');
+      sheetEl.style.setProperty('--zoom', String(window.writeNoteZoom || 1));
+      sheetEl.dataset.index = idx;
+      sheetEl.addEventListener('click', event=>{
+        if(event.target.closest('.page-element')) return;
+        clearElementSelection();
+        if(idx !== doc.currentPage) switchToPage(idx);
+      });
+
+      const bgEl = document.createElement('div');
+      bgEl.className = 'page-bg bg-' + (page.bg || 'ruled');
+      bgEl.style.setProperty('--page-paper', page.bgColor || '#FBF7EE');
+      sheetEl.appendChild(bgEl);
+
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width = PAGE_WIDTH;
+      pageCanvas.height = PAGE_HEIGHT;
+      pageCanvas.dataset.index = idx;
+      sheetEl.appendChild(pageCanvas);
+      const elementsEl = document.createElement('div');
+      elementsEl.className = 'page-elements';
+      elementsEl.dataset.index = idx;
+      sheetEl.appendChild(elementsEl);
+      wrap.appendChild(sheetEl);
+      documentStackEl.appendChild(wrap);
+
+      renderPageElements(page, elementsEl);
+
+      const context = pageCanvas.getContext('2d');
+      context.clearRect(0,0,PAGE_WIDTH,PAGE_HEIGHT);
+      if(page.data){
+        const img = new Image();
+        img.onload = ()=>{
+          context.clearRect(0,0,PAGE_WIDTH,PAGE_HEIGHT);
+          drawStoredDrawing(context, img);
+        };
+        img.src = page.data;
+      }
+    });
+
+    const activeCanvas = document.querySelector('.page-sheet.active canvas');
+    if(activeCanvas){
+      board = activeCanvas;
+      ctx = board.getContext('2d');
+      const activePageIndex = Number(board.dataset.index);
+      if(Number.isInteger(activePageIndex) && activePageIndex !== currentDocument().currentPage) {
+        currentDocument().currentPage = activePageIndex;
+      }
+    } else {
+      board = null;
+      ctx = null;
+    }
+    updatePageIndicator();
+    bindBoardEvents();
+  }
+
+  function bindBoardEvents(){
+    if(!board) return;
+    board.onpointerdown = (e)=>{
+      if(tool==='cursor'){
+        if(lastPastedImage && lastPastedImage.pageId === currentPage().id){
+          const p = getPos(e);
+          const hit = p.x >= lastPastedImage.x && p.x <= lastPastedImage.x + lastPastedImage.width && p.y >= lastPastedImage.y && p.y <= lastPastedImage.y + lastPastedImage.height;
+          if(hit){
+            imageDrag = { offsetX: p.x - lastPastedImage.x, offsetY: p.y - lastPastedImage.y };
+            board.setPointerCapture(e.pointerId);
+            return;
+          }
+        }
+        return;
+      }
+      if(tool==='text'){ placeTextEditor(e); return; }
+      board.setPointerCapture(e.pointerId);
+      drawing = true;
+      const p = getPos(e);
+      lastPagePointer = {x:p.x / board.width, y:p.y / board.height};
+      startX = p.x; startY = p.y;
+      if(['line','arrow','rect','ellipse','triangle'].includes(tool)){
+        snapshotBeforeShape = ctx.getImageData(0,0,board.width,board.height);
+      } else {
+        strokeStyleFor(tool);
+        ctx.beginPath();
+        ctx.moveTo(p.x,p.y);
+        currentStrokePoints = [{x:p.x/board.width, y:p.y/board.height}];
+      }
+    };
+
+    board.onpointermove = (e)=>{
+      const pointerPosition = getPos(e);
+      lastPagePointer = {x:pointerPosition.x / board.width, y:pointerPosition.y / board.height};
+      if(tool==='cursor' && imageDrag && lastPastedImage && lastPastedImage.pageId === currentPage().id){
+        const p = pointerPosition;
+        lastPastedImage.x = Math.min(Math.max(p.x - imageDrag.offsetX, 0), board.width - lastPastedImage.width);
+        lastPastedImage.y = Math.min(Math.max(p.y - imageDrag.offsetY, 0), board.height - lastPastedImage.height);
+        const page = currentPage();
+        const img = new Image();
+        img.onload = () => {
+          ctx.clearRect(0,0,board.width,board.height);
+          if(page.data){
+            const pageImg = new Image();
+            pageImg.onload = () => {
+              ctx.drawImage(pageImg, 0, 0, board.width, board.height);
+              ctx.drawImage(img, lastPastedImage.x, lastPastedImage.y, lastPastedImage.width, lastPastedImage.height);
+            };
+            pageImg.src = page.data;
+          } else {
+            ctx.drawImage(img, lastPastedImage.x, lastPastedImage.y, lastPastedImage.width, lastPastedImage.height);
+          }
+        };
+        img.src = lastPastedImage.src;
+        return;
+      }
+      if(!drawing) return;
+      const p = getPos(e);
+      if(['line','arrow','rect','ellipse','triangle'].includes(tool)){
+        drawShapePreview(p.x,p.y);
+      } else {
+        strokeStyleFor(tool);
+        ctx.lineWidth = tool==='eraser' ? state.stroke*3 : Math.max(1, state.stroke * (0.6+p.pressure));
+        ctx.lineTo(p.x,p.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x,p.y);
+        currentStrokePoints.push({x:p.x/board.width, y:p.y/board.height});
+      }
+    };
+
+    board.onpointerup = (e)=>{
+      if(tool==='cursor'){
+        imageDrag = null;
+        if(lastPastedImage) saveCurrentSnapshot();
+        return;
+      }
+      endStroke(e);
+    };
+    board.onpointerleave = (e)=>{ if(drawing) endStroke(e); if(tool==='cursor' && imageDrag){ imageDrag = null; if(lastPastedImage) saveCurrentSnapshot(); } };
+    board.onpointercancel = (e)=>{ if(tool==='cursor'){ imageDrag = null; if(lastPastedImage) saveCurrentSnapshot(); return; } endStroke(e); };
+  }
+
+  function switchToDocument(i){
+    if(i < 0 || i >= state.documents.length) return;
+    state.currentDoc = i;
+    saveState();
+    renderDocSelect();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+    history = [board.toDataURL()];
+    historyIndex = 0;
+    if(socket && socket.connected) joinRoom(currentPage().id);
+  }
+
+  function switchToPage(i){
+    saveCurrentSnapshot();
+    const doc = currentDocument();
+    if(i < 0 || i >= doc.pages.length) return;
+    doc.currentPage = i;
+    saveState();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+    history = [board.toDataURL()];
+    historyIndex = 0;
+    if(socket && socket.connected) joinRoom(currentPage().id);
+  }
+
+  function saveCurrentSnapshot(){
+    const p = currentPage();
+    if(p) p.data = board.toDataURL();
+  }
+
+  function loadPageOntoCanvas(){
+    if(!board || !ctx) return;
+    const p = currentPage();
+    ctx.clearRect(0,0,board.width,board.height);
+    if(p.data){
+      const img = new Image();
+      img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); drawStoredDrawing(ctx, img); };
+      img.src = p.data;
+    }
+  }
+
+  function applyBgClass(){
+    const p = currentPage();
+    document.querySelectorAll('.page-sheet').forEach(sheetEl => {
+      const idx = Number(sheetEl.dataset.index);
+      const page = currentDocument().pages[idx];
+      if(!page) return;
+      const bgEl = sheetEl.querySelector('.page-bg');
+      if(bgEl){
+        bgEl.className = 'page-bg bg-' + page.bg;
+        bgEl.style.setProperty('--page-paper', page.bgColor);
+      }
+    });
+    Array.from(bgSelect.children).forEach(el=>{
+      el.classList.toggle('active', el.dataset.bg===p.bg);
+    });
+    document.getElementById('pageBgColorCustom').value = p.bgColor;
+  }
+
+  function pushHistory(){
+    historyIndex++;
+    history = history.slice(0, historyIndex);
+    history.push(board.toDataURL());
+    if(history.length>40){ history.shift(); historyIndex--; }
+    saveCurrentSnapshot();
+    saveState();
+  }
+
+  function restoreFromHistory(){
+    const src = history[historyIndex];
+    if(!src) return;
+    const img = new Image();
+    img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); ctx.drawImage(img,0,0); saveCurrentSnapshot(); saveState(); };
+    img.src = src;
+  }
+
+  document.getElementById('undoBtn').addEventListener('click', ()=>{
+    if(historyIndex>0){ historyIndex--; restoreFromHistory(); }
+  });
+  document.getElementById('redoBtn').addEventListener('click', ()=>{
+    if(historyIndex<history.length-1){ historyIndex++; restoreFromHistory(); }
+  });
+
+  document.addEventListener('keydown', (e)=>{
+    if(e.target.tagName==='INPUT' || e.target.tagName==='TEXTAREA') return;
+    if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); document.getElementById('undoBtn').click(); }
+    if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); document.getElementById('redoBtn').click(); }
+    const map = {p:'pen', e:'eraser', l:'line', a:'arrow', r:'rect', o:'ellipse', t:'triangle', x:'text', s:'text'};
+    if(map[e.key.toLowerCase()]) setTool(map[e.key.toLowerCase()]);
+  });
+
+  function setTool(t){
+    tool = t;
+    document.querySelectorAll('.tool[data-tool]').forEach(b=>{
+      b.classList.toggle('active', b.dataset.tool===t);
+    });
+    if(!board) return;
+    board.style.cursor = t==='text' ? 'text' : (t==='cursor' ? 'move' : 'crosshair');
+    updateTextFormatVisibility();
+  }
+  document.getElementById('toolbar').addEventListener('click', (e)=>{
+    const btn = e.target.closest('.tool[data-tool]');
+    if(btn) setTool(btn.dataset.tool);
+  });
+
+  document.getElementById('customColor').addEventListener('input', (e)=>{
+    state.color = e.target.value; renderSwatches(); saveState();
+  });
+  document.getElementById('pageBgColorCustom').addEventListener('input', (e)=>{
+    currentPage().bgColor = e.target.value; applyBgClass(); renderBgSwatches(); saveState();
+  });
+
+  const strokeRange = document.getElementById('strokeRange');
+  const strokeVal = document.getElementById('strokeVal');
+  const strokeDot = document.getElementById('strokeDot');
+  function updateStrokeUI(){
+    strokeVal.textContent = state.stroke;
+    strokeDot.style.width = state.stroke+'px';
+    strokeDot.style.height = state.stroke+'px';
+  }
+  strokeRange.addEventListener('input', ()=>{
+    state.stroke = parseInt(strokeRange.value,10);
+    updateStrokeUI(); saveState();
+  });
+
+  document.getElementById('fontFamilySelect').addEventListener('change', event=>applyTextFormat({fontFamily:event.target.value}));
+  document.getElementById('fontSizeInput').addEventListener('change', event=>{
+    const size = Math.max(8, Math.min(120, Number(event.target.value) || 28));
+    applyTextFormat({fontSize:size});
+  });
+  document.getElementById('fontSizeDown').addEventListener('click', ()=>applyTextFormat({fontSize:Math.max(8, state.textFormat.fontSize - 1)}));
+  document.getElementById('fontSizeUp').addEventListener('click', ()=>applyTextFormat({fontSize:Math.min(120, state.textFormat.fontSize + 1)}));
+  document.querySelectorAll('[data-format]').forEach(button=>button.addEventListener('click', ()=>{
+    const key = button.dataset.format;
+    applyTextFormat({[key]:!state.textFormat[key]});
+  }));
+  document.querySelectorAll('[data-align]').forEach(button=>button.addEventListener('click', ()=>applyTextFormat({align:button.dataset.align})));
+  document.getElementById('textColorInput').addEventListener('input', event=>applyTextFormat({color:event.target.value}));
+  document.getElementById('textHighlightInput').addEventListener('input', event=>applyTextFormat({highlight:event.target.value}));
+
+  bgSelect.addEventListener('click', (e)=>{
+    const opt = e.target.closest('.bg-opt');
+    if(!opt) return;
+    currentPage().bg = opt.dataset.bg;
+    applyBgClass(); saveState();
+  });
+
+  document.getElementById('newDocBtn').addEventListener('click', ()=>{
+    closeMenus();
+    const nextDocIndex = state.documents.length + 1;
+    const doc = createDocument('Tài liệu ' + nextDocIndex, 'Trang 1');
+    state.documents.push(doc);
+    state.currentDoc = state.documents.length - 1;
+    saveState();
+    renderDocSelect();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+    history=[board.toDataURL()];
+    historyIndex=0;
+  });
+
+  document.getElementById('duplicateDocBtn').addEventListener('click', ()=>{
+    closeMenus();
+    const source = currentDocument();
+    const copy = JSON.parse(JSON.stringify(source));
+    copy.id = cryptoId();
+    copy.name = source.name + ' sao';
+    copy.pages = copy.pages.map((p, idx)=>({ ...p, id: cryptoId(), name: p.name || 'Trang ' + (idx + 1) }));
+    state.documents.splice(state.currentDoc + 1, 0, copy);
+    state.currentDoc += 1;
+    saveState();
+    renderDocSelect();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+  });
+
+  document.getElementById('deleteDocBtn').addEventListener('click', ()=>{
+    closeMenus();
+    if(state.documents.length <= 1){
+      const ok = window.confirm('Bạn muốn reset tài liệu hiện tại về trang trắng?');
+      if(!ok) return;
+      const doc = currentDocument();
+      doc.name = 'Tài liệu 1';
+      doc.pages = [createBlankPage('Trang 1')];
+      doc.currentPage = 0;
+      saveState();
+      renderDocSelect();
+      renderDocumentStack();
+      loadPageOntoCanvas();
+      applyBgClass();
+      renderBgSwatches();
+      return;
+    }
+
+    if(!window.confirm('Bạn có chắc muốn xóa tài liệu hiện tại?')) return;
+    state.documents.splice(state.currentDoc, 1);
+    state.currentDoc = Math.max(0, Math.min(state.currentDoc, state.documents.length - 1));
+    saveState();
+    renderDocSelect();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+    history=[board.toDataURL()];
+    historyIndex=0;
+  });
+
+  document.getElementById('docSelect').addEventListener('change', (e)=>{
+    switchToDocument(Number(e.target.value));
+  });
+
+  document.getElementById('addPageBtn').addEventListener('click', ()=>{
+    closeMenus();
+    insertPageAfterCurrent();
+  });
+  document.getElementById('clearContentBtn').addEventListener('click', ()=>{
+    closeMenus();
+    if(!window.confirm('Bạn có chắc muốn xóa toàn bộ nội dung trên tất cả các trang?')) return;
+    const doc = currentDocument();
+    doc.pages.forEach(page=>{
+      page.data = null;
+      page.elements = [];
+      if(socket && socket.connected) socket.emit('clear', {room: page.id});
+    });
+    saveState();
+    renderDocumentStack();
+    applyBgClass();
+    renderBgSwatches();
+    history = [board.toDataURL()];
+    historyIndex = 0;
+  });
+  document.getElementById('deletePageBtn').addEventListener('click', ()=>{
+    closeMenus();
+    const doc = currentDocument();
+    if(doc.pages.length <= 1){
+      const ok = window.confirm('Bạn muốn xóa nội dung trang hiện tại và giữ lại một trang trắng?');
+      if(!ok) return;
+      const page = currentPage();
+      page.data = null;
+      page.elements = [];
+      page.bg = 'ruled';
+      page.bgColor = '#FBF7EE';
+      saveState();
+      renderDocumentStack();
+      return;
+    }
+    if(!window.confirm('Bạn có chắc muốn xóa trang hiện tại?')) return;
+    doc.pages.splice(doc.currentPage, 1);
+    if(doc.currentPage >= doc.pages.length) doc.currentPage = doc.pages.length - 1;
+    saveState();
+    renderDocumentStack();
+    loadPageOntoCanvas();
+    applyBgClass();
+    renderBgSwatches();
+  });
+
+  function renderPageBackground(context, page, w, h){
+    context.fillStyle = page.bgColor;
+    context.fillRect(0,0,w,h);
+    context.strokeStyle = 'rgba(27,35,64,0.14)';
+    context.lineWidth = 1;
+    if(page.bg==='ruled'){
+      for(let y=64; y<h; y+=64){ context.beginPath(); context.moveTo(0,y); context.lineTo(w,y); context.stroke(); }
+    } else if(page.bg==='grid'){
+      for(let y=56; y<h; y+=56){ context.beginPath(); context.moveTo(0,y); context.lineTo(w,y); context.stroke(); }
+      for(let x=56; x<w; x+=56){ context.beginPath(); context.moveTo(x,0); context.lineTo(x,h); context.stroke(); }
+    } else if(page.bg==='dot'){
+      context.fillStyle = 'rgba(27,35,64,0.22)';
+      for(let y=44; y<h; y+=44){
+        for(let x=44; x<w; x+=44){ context.beginPath(); context.arc(x,y,2.2,0,Math.PI*2); context.fill(); }
+      }
+    }
+  }
+
+  function composedCanvas(){
+    const out = document.createElement('canvas');
+    out.width = board.width; out.height = board.height;
+    const octx = out.getContext('2d');
+    renderPageBackground(octx, currentPage(), out.width, out.height);
+    octx.drawImage(board, 0, 0);
+    return out;
+  }
+
+  function composeStoredPage(page){
+    return new Promise(resolve=>{
+      const out = document.createElement('canvas');
+      out.width = PAGE_WIDTH;
+      out.height = PAGE_HEIGHT;
+      const outContext = out.getContext('2d');
+      renderPageBackground(outContext, page, PAGE_WIDTH, PAGE_HEIGHT);
+      if(!page.data){
+        resolve(out);
+        return;
+      }
+      const image = new Image();
+      image.onload = ()=>{
+        drawStoredDrawing(outContext, image);
+        resolve(out);
+      };
+      image.onerror = ()=>resolve(out);
+      image.src = page.data;
+    });
+  }
+
+  document.getElementById('exportPdf').addEventListener('click', async ()=>{
+    closeMenus();
+    saveCurrentSnapshot();
+    saveState();
+    const printWindow = window.open('', '_blank');
+    if(!printWindow) return;
+    printWindow.document.write('<!doctype html><html><head><meta charset="UTF-8"><title>' + (currentDocument().name || 'WriteNote') + '</title><style>@page{size:A4 portrait;margin:0}html,body{margin:0;padding:0;background:#fff}body{width:210mm}.print-page{width:210mm;height:297mm;display:block;page-break-after:always;break-after:page;object-fit:fill}.print-page:last-child{page-break-after:auto;break-after:auto}</style></head><body><div id="pages"></div></body></html>');
+    printWindow.document.close();
+    const pages = await Promise.all(currentDocument().pages.map(page=>composeStoredPage(page)));
+    const container = printWindow.document.getElementById('pages');
+    pages.forEach(pageCanvas=>{
+      const image = printWindow.document.createElement('img');
+      image.className = 'print-page';
+      image.src = pageCanvas.toDataURL('image/png');
+      container.appendChild(image);
+    });
+    setTimeout(()=>{ printWindow.focus(); printWindow.print(); }, 250);
+  });
+
+  /* ---------- Drawing ---------- */
+  function getPos(e){
+    const rect = board.getBoundingClientRect();
+    const scaleX = board.width/rect.width;
+    const scaleY = board.height/rect.height;
+    return { x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY, pressure: e.pressure && e.pressure>0 ? e.pressure : 0.5 };
+  }
+
+  function strokeStyleFor(t){
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    if(t==='eraser'){
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.strokeStyle = 'rgba(0,0,0,1)';
+      ctx.lineWidth = state.stroke*3;
+    } else {
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.strokeStyle = state.color;
+      ctx.lineWidth = state.stroke;
+    }
+  }
+
+  function drawArrowHead(x1,y1,x2,y2){
+    const angle = Math.atan2(y2-y1, x2-x1);
+    const len = 14 + state.stroke;
+    ctx.beginPath();
+    ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-len*Math.cos(angle-Math.PI/7), y2-len*Math.sin(angle-Math.PI/7));
+    ctx.moveTo(x2,y2);
+    ctx.lineTo(x2-len*Math.cos(angle+Math.PI/7), y2-len*Math.sin(angle+Math.PI/7));
+    ctx.stroke();
+  }
+
+  function drawShapePreview(x,y){
+    ctx.putImageData(snapshotBeforeShape, 0, 0);
+    strokeStyleFor(tool);
+    if(tool==='line' || tool==='arrow'){
+      ctx.beginPath(); ctx.moveTo(startX,startY); ctx.lineTo(x,y); ctx.stroke();
+      if(tool==='arrow') drawArrowHead(startX,startY,x,y);
+    } else if(tool==='rect'){
+      ctx.strokeRect(Math.min(startX,x), Math.min(startY,y), Math.abs(x-startX), Math.abs(y-startY));
+    } else if(tool==='ellipse'){
+      ctx.beginPath();
+      ctx.ellipse((startX+x)/2, (startY+y)/2, Math.abs(x-startX)/2, Math.abs(y-startY)/2, 0, 0, Math.PI*2);
+      ctx.stroke();
+    } else if(tool==='triangle'){
+      ctx.beginPath();
+      ctx.moveTo((startX+x)/2, startY);
+      ctx.lineTo(startX, y);
+      ctx.lineTo(x, y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+
+  function endStroke(e){
+    if(!drawing || !board || !ctx) return;
+    drawing = false;
+    pushHistory();
+    if(['line','arrow','rect','ellipse','triangle'].includes(tool)){
+      const p = getPos(e);
+      emitShape(tool, startX/board.width, startY/board.height, p.x/board.width, p.y/board.height);
+    } else if(currentStrokePoints.length>1){
+      emitStroke(tool, currentStrokePoints);
+    }
+    currentStrokePoints = [];
+  }
+
+  function placeTextEditor(e){
+    if(!board) return;
+    const rect = board.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const editor = document.createElement('textarea');
+    editor.className = 'text-editor';
+    editor.style.left = x + 'px';
+    editor.style.top = y + 'px';
+    const format = state.textFormat;
+    const fontSize = format.fontSize;
+    const displayScale = rect.width / board.width;
+    const displayFontSize = fontSize * displayScale;
+    editor.style.fontSize = displayFontSize + 'px';
+    editor.style.fontFamily = format.fontFamily;
+    editor.style.fontWeight = format.bold ? '700' : '400';
+    editor.style.fontStyle = format.italic ? 'italic' : 'normal';
+    editor.style.textDecoration = format.underline ? 'underline' : 'none';
+    editor.style.color = format.color;
+    editor.style.backgroundColor = format.highlight;
+    editor.style.textAlign = format.align;
+    editor.style.minWidth = '80px';
+    editor.style.lineHeight = '1.2';
+    editor.style.width = Math.max(90, 180 * displayScale) + 'px';
+    editor.style.height = Math.max(32, 44 * displayScale) + 'px';
+    editor.style.zIndex = '20';
+    editor.placeholder = 'Nhập chữ';
+    editor.spellcheck = false;
+    editor.autocomplete = 'off';
+    editor.autocapitalize = 'off';
+    editor.lang = 'vi';
+    activeTextEditor = editor;
+    syncTextFormatControls(format);
+    updateTextFormatVisibility();
+    board.parentElement.appendChild(editor);
+    requestAnimationFrame(()=>{ editor.focus(); editor.setSelectionRange(editor.value.length, editor.value.length); });
+    function commit(){
+      const text = editor.value;
+      if(text.trim()){
+        const currentFormat = state.textFormat;
+        const scaleX = board.width / rect.width;
+        const scaleY = board.height / rect.height;
+        const drawX = x * scaleX;
+        const drawY = y * scaleY;
+        ctx.save();
+        ctx.fillStyle = currentFormat.color;
+        ctx.font = (currentFormat.bold ? '700 ' : '') + (currentFormat.italic ? 'italic ' : '') + currentFormat.fontSize + 'px ' + JSON.stringify(currentFormat.fontFamily);
+        ctx.textBaseline = 'top';
+        ctx.textAlign = currentFormat.align === 'center' ? 'center' : (currentFormat.align === 'right' ? 'right' : 'left');
+        text.split('\n').forEach((line, i)=>{
+          const lineY = drawY + i * (currentFormat.fontSize * 1.35);
+          if(currentFormat.highlight && currentFormat.highlight !== 'transparent'){
+            const width = ctx.measureText(line).width;
+            const left = currentFormat.align === 'center' ? drawX - width / 2 : (currentFormat.align === 'right' ? drawX - width : drawX);
+            ctx.fillStyle = currentFormat.highlight;
+            ctx.fillRect(left - 3, lineY, width + 6, currentFormat.fontSize * 1.2);
+            ctx.fillStyle = currentFormat.color;
+          }
+          ctx.fillText(line, drawX, lineY);
+          if(currentFormat.underline){
+            const width = ctx.measureText(line).width;
+            const left = currentFormat.align === 'center' ? drawX - width / 2 : (currentFormat.align === 'right' ? drawX - width : drawX);
+            ctx.fillRect(left, lineY + currentFormat.fontSize * 1.08, width, Math.max(1, currentFormat.fontSize / 14));
+          }
+        });
+        ctx.restore();
+        pushHistory();
+        emitText(text, x / rect.width, y / rect.height, currentFormat.fontSize / board.width);
+      }
+      editor.remove();
+      activeTextEditor = null;
+      updateTextFormatVisibility();
+    }
+    editor.addEventListener('blur', commit);
+    editor.addEventListener('keydown', (ev)=>{
+      if(ev.key==='Escape'){ editor.remove(); activeTextEditor = null; updateTextFormatVisibility(); }
+      if(ev.key==='Enter' && (ev.ctrlKey || ev.metaKey)){ ev.preventDefault(); commit(); }
+    });
+    editor.addEventListener('paste', (ev)=>{
+      const pasted = (ev.clipboardData || window.clipboardData || {}).getData('text');
+      if(pasted){
+        ev.preventDefault();
+        const selectionStart = editor.selectionStart || 0;
+        const startText = editor.value.slice(0, selectionStart);
+        const endText = editor.value.slice(editor.selectionEnd || selectionStart);
+        editor.value = startText + pasted + endText;
+        editor.selectionStart = editor.selectionEnd = startText.length + pasted.length;
+      }
+    });
+  }
+
+  function insertTextAtPosition(text, x, y, fontSizeOverride){
+    const safeText = text || '';
+    if(!safeText.trim()) return;
+    const fontSize = fontSizeOverride || (20 + state.stroke * 2);
+    const drawX = x * board.width;
+    const drawY = y * board.height;
+    ctx.save();
+    ctx.fillStyle = state.color;
+    ctx.font = fontSize + "px 'Segoe UI','Inter',sans-serif";
+    ctx.textBaseline = 'top';
+    safeText.split('\n').forEach((line, i)=>{ ctx.fillText(line, drawX, drawY + i * (fontSize + 4)); });
+    ctx.restore();
+    pushHistory();
+    emitText(safeText, x, y, fontSize / board.width);
+  }
+
+  function drawImageAtPosition(img, x, y, width, height){
+    const imageWidth = width || 220;
+    const imageHeight = height || 220;
+    addPageElement({
+      id: cryptoId(),
+      type:'image',
+      src:img.src,
+      x:Math.max(0, Math.min(1 - imageWidth / board.width, x)),
+      y:Math.max(0, Math.min(1 - imageHeight / board.height, y)),
+      width:imageWidth / board.width,
+      height:imageHeight / board.height
+    });
+  }
+
+  function insertImageSource(source){
+    if(!source || !board) return Promise.resolve(false);
+    try{
+      if(!source.startsWith('data:') && !source.startsWith('blob:')) source = new URL(source, window.location.href).href;
+    }catch(error){}
+    return new Promise(resolve=>{
+      const image = new Image();
+      image.onload = ()=>{
+        const targetX = lastPagePointer ? lastPagePointer.x : 0.5;
+        const targetY = lastPagePointer ? lastPagePointer.y : 0.5;
+        const maxWidth = board.width * 0.72;
+        const maxHeight = board.height * 0.72;
+        const ratio = Math.min(maxWidth / image.width, maxHeight / image.height, 1.5);
+        const drawWidth = Math.max(160, image.width * ratio);
+        const drawHeight = Math.max(120, image.height * ratio);
+        drawImageAtPosition(image, targetX - drawWidth / (2 * board.width), targetY - drawHeight / (2 * board.height), drawWidth, drawHeight);
+        resolve(true);
+      };
+      image.onerror = ()=>resolve(false);
+      image.src = source;
+    });
+  }
+
+  function insertImageFile(imageFile){
+    if(!imageFile) return Promise.resolve(false);
+    return new Promise(resolve=>{
+      const reader = new FileReader();
+      reader.onload = ()=>insertImageSource(reader.result).then(resolve);
+      reader.onerror = ()=>resolve(false);
+      reader.readAsDataURL(imageFile);
+    });
+  }
+
+  async function handlePasteEvent(event){
+    const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+    const files = event.clipboardData && event.clipboardData.files ? Array.from(event.clipboardData.files) : [];
+    const hasImageItem = items.some(item=>item.kind === 'file' && item.type.indexOf('image') !== -1);
+    const hasImageFile = files.some(file=>file.type.indexOf('image') !== -1);
+    if(hasImageItem || hasImageFile || items.some(item=>item.kind === 'string' && item.type === 'text/plain')){
+      event.preventDefault();
+    }
+    let pastedText = '';
+    let imageFile = files.find(file=>file.type.indexOf('image') !== -1) || null;
+    const pastedHtml = event.clipboardData && typeof event.clipboardData.getData === 'function' ? event.clipboardData.getData('text/html') : '';
+    const pastedUri = event.clipboardData && typeof event.clipboardData.getData === 'function' ? event.clipboardData.getData('text/uri-list') : '';
+    let htmlImageSource = '';
+    if(pastedHtml){
+      const htmlDocument = new DOMParser().parseFromString(pastedHtml, 'text/html');
+      htmlImageSource = htmlDocument.querySelector('img')?.getAttribute('src') || '';
+      if(htmlImageSource) event.preventDefault();
+    }
+    if(!htmlImageSource && pastedUri){
+      const uri = pastedUri.split(/\r?\n/).find(value=>value && !value.startsWith('#')) || '';
+      if(/\.(png|jpe?g|gif|webp|bmp)(\?.*)?$/i.test(uri) || uri.startsWith('data:image') || uri.startsWith('blob:')){
+        htmlImageSource = uri.trim();
+        event.preventDefault();
+      }
+    }
+
+    if(!items.length && !files.length && board && navigator.clipboard && typeof navigator.clipboard.read === 'function'){
+      nativePasteHandled = true;
+      try{
+        const clipboardItems = await navigator.clipboard.read();
+        for(const clipboardItem of clipboardItems){
+          const imageType = clipboardItem.types.find(type=>type.indexOf('image') !== -1);
+          if(imageType){
+            await insertImageFile(await clipboardItem.getType(imageType));
+            return;
+          }
+          if(clipboardItem.types.includes('text/plain')){
+            const directText = (await (await clipboardItem.getType('text/plain')).text()).trim();
+            if(directText){
+              addPageElement({id:cryptoId(), type:'text', text:directText, x:0.18, y:0.18, width:0.48, height:0.2, fontSize:28, color:state.color});
+            }
+            return;
+          }
+          if(clipboardItem.types.includes('text/html')){
+            const htmlText = await (await clipboardItem.getType('text/html')).text();
+            const htmlDocument = new DOMParser().parseFromString(htmlText, 'text/html');
+            const htmlImageSource = htmlDocument.querySelector('img')?.getAttribute('src') || '';
+            if(htmlImageSource) await insertImageSource(htmlImageSource);
+            return;
+          }
+          if(clipboardItem.types.includes('text/uri-list')){
+            const uri = (await (await clipboardItem.getType('text/uri-list')).text()).split(/\r?\n/).find(value=>value && !value.startsWith('#')) || '';
+            if(uri) await insertImageSource(uri.trim());
+            return;
+          }
+        }
+      }catch(error){
+        return;
+      }
+      return;
+    }
+
+    for(let i = 0; i < items.length; i++){
+      const item = items[i];
+      if(item.kind === 'file' && item.type.indexOf('image') !== -1){
+        imageFile = item.getAsFile() || imageFile;
+      }
+      if(item.kind === 'string' && item.type === 'text/plain'){
+        const text = await new Promise(resolve => item.getAsString(resolve));
+        if(text) pastedText += text;
+      }
+    }
+
+    if(imageFile && board){
+      event.preventDefault();
+      await insertImageFile(imageFile);
+      return;
+    }
+
+    if(htmlImageSource && board){
+      await insertImageSource(htmlImageSource);
+      return;
+    }
+
+    if(pastedText && board){
+      event.preventDefault();
+      const text = pastedText.trim();
+      if(!text) return;
+      addPageElement({
+        id: cryptoId(),
+        type:'text',
+        text,
+        x:0.18,
+        y:0.18,
+        width:0.48,
+        height:Math.min(0.35, Math.max(0.08, text.split('\n').length * 0.045)),
+        fontSize:28,
+        color:state.color
+      });
+    }
+  }
+
+  let nativePasteHandled = false;
+  window.addEventListener('paste', (event) => {
+    const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+    const files = event.clipboardData && event.clipboardData.files ? Array.from(event.clipboardData.files) : [];
+    const containsImage = items.some(item=>item.type && item.type.indexOf('image') !== -1) || files.some(file=>file.type && file.type.indexOf('image') !== -1);
+    const containsText = items.some(item=>item.kind === 'string' && item.type === 'text/plain');
+    nativePasteHandled = containsImage || containsText;
+    const target = event.target;
+    const isNormalTextField = target && (target.id === 'serverAddr' || target.id === 'directLink' || target.classList?.contains('text-editor'));
+    if(!containsImage && isNormalTextField) return;
+    handlePasteEvent(event);
+  }, true);
+
+  window.addEventListener('keydown', async (event)=>{
+    if(!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v') return;
+    const target = event.target;
+    if(target && (target.id === 'serverAddr' || target.id === 'directLink' || target.classList?.contains('text-editor') || target.isContentEditable)) return;
+    if(!navigator.clipboard || typeof navigator.clipboard.read !== 'function' || !board) return;
+    nativePasteHandled = false;
+    try{
+      const clipboardItems = await navigator.clipboard.read();
+      await new Promise(resolve=>setTimeout(resolve, 80));
+      if(nativePasteHandled) return;
+      for(const clipboardItem of clipboardItems){
+        const imageType = clipboardItem.types.find(type=>type.indexOf('image') !== -1);
+        if(imageType){
+          await insertImageFile(await clipboardItem.getType(imageType));
+          return;
+        }
+        if(clipboardItem.types.includes('text/plain')){
+          const text = (await (await clipboardItem.getType('text/plain')).text()).trim();
+          if(text){
+            addPageElement({id:cryptoId(), type:'text', text, x:0.18, y:0.18, width:0.48, height:0.2, fontSize:28, color:state.color});
+          }
+          return;
+        }
+      }
+    }catch(error){
+      const status = document.getElementById('connStatus');
+      if(status) status.textContent = 'Không đọc được clipboard ảnh';
+      return;
+    }
+  }, true);
+
+  window.addEventListener('copy', (event) => {
+    const target = event.target;
+    if(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+    const png = composedCanvas().toDataURL('image/png');
+    if(navigator.clipboard && window.ClipboardItem){
+      fetch(png).then(res => res.blob()).then(blob => {
+        const item = new ClipboardItem({ 'image/png': blob });
+        navigator.clipboard.write([item]).catch(()=>{});
+      });
+    }
+  });
+
+  /* ---------- Realtime (Socket.io) ---------- */
+  let socket = null;
+  let currentRoom = null;
+
+  const toolbarEl = document.getElementById('toolbar');
+  const bodyEl = document.getElementById('mainBody');
+  const settingsPanel = document.getElementById('settingsPanel');
+  const toolbarToggle = document.getElementById('toolbarToggle');
+  const panelToggle = document.getElementById('panelToggle');
+  let toolbarCollapsed = false;
+  let panelCollapsed = false;
+
+  function toggleToolbar(){
+    toolbarCollapsed = !toolbarCollapsed;
+    toolbarEl.classList.toggle('collapsed', toolbarCollapsed);
+    bodyEl.classList.toggle('toolbar-collapsed', toolbarCollapsed);
+    toolbarToggle.textContent = toolbarCollapsed ? '⟩' : '⟨';
+    toolbarToggle.title = toolbarCollapsed ? 'Mở thanh công cụ' : 'Thu gọn thanh công cụ';
+  }
+
+  function togglePanel(){
+    panelCollapsed = !panelCollapsed;
+    settingsPanel.classList.toggle('collapsed', panelCollapsed);
+    bodyEl.classList.toggle('panel-collapsed', panelCollapsed);
+    panelToggle.textContent = panelCollapsed ? '⟨' : '⟩';
+    panelToggle.title = panelCollapsed ? 'Mở cài đặt' : 'Thu gọn cài đặt';
+  }
+  toolbarToggle.addEventListener('click', toggleToolbar);
+  panelToggle.addEventListener('click', togglePanel);
+
+  const zoomRange = document.getElementById('zoomRange');
+  const zoomValue = document.getElementById('zoomValue');
+  window.writeNoteZoom = 1;
+  zoomRange.addEventListener('input', ()=>{
+    const zoomPercent = Number(zoomRange.value);
+    window.writeNoteZoom = zoomPercent / 100;
+    zoomValue.textContent = zoomPercent + '%';
+    renderDocumentStack();
+    applyBgClass();
+  });
+
+  ['fileMenuBtn','editMenuBtn'].forEach((id)=>{
+    const btn = document.getElementById(id);
+    const panel = document.getElementById(id === 'fileMenuBtn' ? 'fileMenuPanel' : 'editMenuPanel');
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const open = !panel.classList.contains('open');
+      document.querySelectorAll('.menu-panel').forEach(p => p.classList.remove('open'));
+      document.querySelectorAll('.menu-button').forEach(b => b.setAttribute('aria-expanded', 'false'));
+      if(open){
+        panel.classList.add('open');
+        btn.setAttribute('aria-expanded', 'true');
+      }
+    });
+  });
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.menu-button') && !e.target.closest('.menu-panel')){
+      document.querySelectorAll('.menu-panel').forEach(p => p.classList.remove('open'));
+      document.querySelectorAll('.menu-button').forEach(b => b.setAttribute('aria-expanded', 'false'));
+    }
+  });
+
+  document.getElementById('linkBtn').addEventListener('click', ()=>{
+    document.getElementById('linkPageName').textContent = currentPage().name;
+    document.getElementById('linkModalOverlay').style.display='flex';
+    regenerateQr();
+  });
+  document.getElementById('closeModal').addEventListener('click', ()=>{
+    document.getElementById('linkModalOverlay').style.display='none';
+  });
+  document.getElementById('serverAddr').addEventListener('change', regenerateQr);
+  document.getElementById('copyLinkBtn').addEventListener('click', async ()=>{
+    const directLink = document.getElementById('directLink').value;
+    try {
+      await navigator.clipboard.writeText(directLink);
+      document.getElementById('connStatus').textContent = 'Đã copy link trực tiếp';
+    } catch (err) {
+      document.getElementById('directLink').select();
+      document.execCommand('copy');
+      document.getElementById('connStatus').textContent = 'Đã copy link trực tiếp';
+    }
+  });
+  document.getElementById('openLinkBtn').addEventListener('click', ()=>{
+    const url = document.getElementById('directLink').value;
+    window.open(url, '_blank');
+  });
+
+  async function getQrServerBase(){
+    const input = document.getElementById('serverAddr');
+    const currentBase = input.value.replace(/\/$/,'') || window.location.origin;
+    try{
+      const response = await fetch('/network-address', {cache:'no-store'});
+      if(response.ok){
+        const network = await response.json();
+        if(network.address && network.port){
+          const currentUrl = new URL(currentBase);
+          const base = currentUrl.protocol + '//' + network.address + ':' + network.port;
+          input.value = base;
+          return base;
+        }
+      }
+    }catch(error){}
+    return currentBase;
+  }
+
+  async function regenerateQr(){
+    const base = await getQrServerBase();
+    const url = base + '/mobile.html?room=' + encodeURIComponent(currentPage().id);
+    document.getElementById('directLink').value = url;
+    const qrContainer = document.getElementById('qrCanvas');
+    qrContainer.innerHTML = '';
+    qrContainer.style.background = '#FFFFFF';
+    if(typeof window.QRCode === 'function'){
+      try{
+        new window.QRCode(qrContainer, {
+          text:url,
+          width:220,
+          height:220,
+          colorDark:'#1B2340',
+          colorLight:'#FFFFFF',
+          correctLevel:window.QRCode.CorrectLevel ? window.QRCode.CorrectLevel.M : 0
+        });
+        return;
+      }catch(error){}
+    }
+    if(window.QRCode && typeof window.QRCode.toCanvas === 'function'){
+      const canvas = document.createElement('canvas');
+      canvas.width = 220;
+      canvas.height = 220;
+      qrContainer.appendChild(canvas);
+      window.QRCode.toCanvas(canvas, url, {width:220, margin:1, errorCorrectionLevel:'M'}, function(error){
+        if(error) document.getElementById('connStatus').textContent = 'Không tạo được mã QR';
+      });
+      return;
+    }
+    document.getElementById('connStatus').textContent = 'Thư viện QR chưa tải được';
+  }
+
+  document.getElementById('connectBtn').addEventListener('click', ()=>{
+    const base = document.getElementById('serverAddr').value.replace(/\/$/,'');
+    if(socket){ socket.disconnect(); }
+    socket = io(base, {transports:['websocket','polling']});
+    const statusEl = document.getElementById('connStatus');
+    statusEl.textContent = 'Đang kết nối...';
+    socket.on('connect', ()=>{
+      statusEl.textContent = 'Đã kết nối';
+      joinRoom(currentPage().id);
+    });
+    socket.on('disconnect', ()=>{ statusEl.textContent = 'Mất kết nối'; });
+    socket.on('connect_error', ()=>{ statusEl.textContent = 'Không kết nối được tới máy chủ'; });
+    bindSocketEvents();
+  });
+
+  function joinRoom(roomId){
+    if(!socket || !socket.connected) return;
+    currentRoom = roomId;
+    socket.emit('join-room', {room: roomId});
+  }
+
+  function bindSocketEvents(){
+    socket.on('request-snapshot', ({forId})=>{
+      socket.emit('snapshot-response', {forId, dataUrl: board.toDataURL()});
+    });
+    socket.on('snapshot', ({dataUrl})=>{
+      const img = new Image();
+      img.onload = ()=>{ ctx.drawImage(img,0,0,board.width,board.height); pushHistory(); };
+      img.src = dataUrl;
+    });
+    socket.on('stroke', (p)=>{ if(p.room===currentRoom) applyRemoteStroke(p); });
+    socket.on('shape', (p)=>{ if(p.room===currentRoom) applyRemoteShape(p); });
+    socket.on('text', (p)=>{ if(p.room===currentRoom) applyRemoteText(p); });
+    socket.on('clear', (p)=>{
+      if(p.room!==currentRoom) return;
+      currentPage().data = null;
+      currentPage().elements = [];
+      ctx.clearRect(0,0,board.width,board.height);
+      const container = document.querySelector('.page-sheet.active .page-elements');
+      if(container) renderPageElements(currentPage(), container);
+      saveState();
+    });
+    socket.on('peer-joined', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
+    socket.on('peer-left', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
+  }
+
+  function emitStroke(t, points){
+    if(!socket || !socket.connected || !currentRoom) return;
+    socket.emit('stroke', {room: currentRoom, tool:t, color: state.color, width: t==='eraser' ? state.stroke*3 : state.stroke, points});
+  }
+  function emitShape(shape, x1,y1,x2,y2){
+    if(!socket || !socket.connected || !currentRoom) return;
+    socket.emit('shape', {room: currentRoom, shape, color: state.color, width: state.stroke, x1,y1,x2,y2});
+  }
+  function emitText(text, x, y, fontSize){
+    if(!socket || !socket.connected || !currentRoom) return;
+    socket.emit('text', {room: currentRoom, text, x, y, color: state.color, fontSize});
+  }
+  function emitClear(){
+    if(!socket || !socket.connected || !currentRoom) return;
+    socket.emit('clear', {room: currentRoom});
+  }
+
+  function applyRemoteStroke(p){
+    ctx.save();
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.globalCompositeOperation = p.tool==='eraser' ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = p.tool==='eraser' ? 'rgba(0,0,0,1)' : p.color;
+    ctx.lineWidth = p.width;
+    ctx.beginPath();
+    p.points.forEach((pt,i)=>{
+      const x = pt.x*board.width, y = pt.y*board.height;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+    ctx.restore();
+    saveCurrentSnapshot(); saveState();
+  }
+
+  function applyRemoteShape(p){
+    ctx.save();
+    ctx.lineJoin='round'; ctx.lineCap='round';
+    ctx.globalCompositeOperation='source-over';
+    ctx.strokeStyle=p.color; ctx.lineWidth=p.width;
+    const x1=p.x1*board.width, y1=p.y1*board.height, x2=p.x2*board.width, y2=p.y2*board.height;
+    if(p.shape==='line'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
+    else if(p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); drawArrowHead(x1,y1,x2,y2); }
+    else if(p.shape==='rect'){ ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1)); }
+    else if(p.shape==='ellipse'){ ctx.beginPath(); ctx.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2,Math.abs(y2-y1)/2,0,0,Math.PI*2); ctx.stroke(); }
+    else if(p.shape==='triangle'){ ctx.beginPath(); ctx.moveTo((x1+x2)/2,y1); ctx.lineTo(x1,y2); ctx.lineTo(x2,y2); ctx.closePath(); ctx.stroke(); }
+    ctx.restore();
+    saveCurrentSnapshot(); saveState();
+  }
+
+  function applyRemoteText(p){
+    ctx.save();
+    ctx.fillStyle = p.color;
+    const px = p.fontSize*board.width;
+    ctx.font = px + "px 'Segoe UI','Inter',sans-serif";
+    ctx.textBaseline='top';
+    const x=p.x*board.width, y=p.y*board.height;
+    p.text.split('\n').forEach((line,i)=>{ ctx.fillText(line, x, y+i*(px+4)); });
+    ctx.restore();
+    saveCurrentSnapshot(); saveState();
+  }
+
+  function init(){
+    renderSwatches();
+    renderDocSelect();
+    renderDocumentStack();
+    updateStrokeUI();
+    strokeRange.value = state.stroke;
+    document.getElementById('customColor').value = state.color;
+    applyBgClass();
+    renderBgSwatches();
+    if(board){
+      setTimeout(()=>{ history=[board.toDataURL()]; historyIndex=0; }, 60);
+    }
+  }
+  init();
+
+  window.addEventListener('beforeunload', saveCurrentSnapshot);
+})();
+</script>
+</body>
+</html>

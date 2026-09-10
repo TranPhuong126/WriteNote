@@ -1,0 +1,13 @@
+{
+  "name": "whynot-realtime-server",
+  "version": "1.0.0",
+  "description": "May chu dong bo thoi gian thuc cho Why not (ghi chu & ve tay) qua QR",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
