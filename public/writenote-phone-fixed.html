@@ -467,6 +467,34 @@
     currentStrokeId = null;
   }
 
+  // ===== Chống lỗi "chấm mực thừa" khi bắt đầu pinch-zoom 2 ngón =====
+  // Trước đây, ngón đầu tiên chạm xuống là gọi beginStroke() NGAY LẬP TỨC
+  // (chưa biết đây là vẽ 1 ngón hay chuẩn bị zoom 2 ngón). Khi ngón thứ 2
+  // chạm vào ngay sau đó (pinch), code gọi endStroke() để "hủy" nét đang vẽ
+  // dở — nhưng vì ngón 1 CHƯA HỀ DI CHUYỂN nên đoạn nét đó có độ dài 0, và do
+  // lineCap:'round' nên canvas vẫn vẽ ra một CHẤM TRÒN tại điểm chạm đầu
+  // tiên thay vì bị hủy hoàn toàn — đây chính là các chấm thừa xuất hiện mỗi
+  // lần bắt đầu zoom.
+  //
+  // Cách sửa: khi ngón đầu tiên chạm xuống, KHÔNG vẽ ngay — chờ một khoảng
+  // ngắn (PINCH_DETECT_DELAY) để xác nhận không có ngón thứ 2 chạm vào tiếp
+  // theo (tức chắc chắn là thao tác vẽ 1 ngón) rồi mới thật sự beginStroke().
+  // - Nếu ngón thứ 2 chạm vào trong lúc chờ -> huỷ hẳn, chuyển sang pinch,
+  //   không có nét/chấm nào được vẽ.
+  // - Nếu người dùng nhấc ngón ra trước khi hết thời gian chờ (chạm rất
+  //   nhanh, ý định thật sự là chấm 1 điểm) -> vẫn vẽ chấm đó bình thường.
+  // - Nếu người dùng bắt đầu kéo ngón trước khi hết thời gian chờ (ý định
+  //   rõ ràng là vẽ nét dài, không phải chờ ngón 2) -> bắt đầu vẽ ngay lập
+  //   tức, không đợi hết delay, để không tạo cảm giác trễ khi vẽ.
+  const PINCH_DETECT_DELAY = 60; // ms
+  let pendingStrokeTimer = null;
+  let pendingStrokeEvent = null;
+
+  function clearPendingStroke(){
+    if(pendingStrokeTimer){ clearTimeout(pendingStrokeTimer); pendingStrokeTimer = null; }
+    pendingStrokeEvent = null;
+  }
+
   // Tất cả tương tác chạm (vẽ 1 ngón, phóng to/kéo 2 ngón) đều lắng nghe trên
   // #canvasViewport — một hệ quy chiếu ỔN ĐỊNH không bị transform — để việc
   // quy đổi toạ độ luôn nhất quán, tách biệt hẳn khỏi canvas đang bị zoom/pan.
@@ -474,9 +502,15 @@
     canvasViewport.setPointerCapture(e.pointerId);
     activePointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
     if(activePointers.size === 1 && !suppressDraw){
-      beginStroke(e);
+      pendingStrokeEvent = e;
+      pendingStrokeTimer = setTimeout(()=>{
+        pendingStrokeTimer = null;
+        if(pendingStrokeEvent) beginStroke(pendingStrokeEvent);
+        pendingStrokeEvent = null;
+      }, PINCH_DETECT_DELAY);
     } else if(activePointers.size === 2){
-      endStroke(); // huỷ nét đang vẽ dở bằng 1 ngón (nếu có) khi ngón thứ 2 chạm vào
+      clearPendingStroke(); // huỷ hẳn ý định vẽ của ngón 1 — không vẽ chấm nào cả
+      endStroke(); // phòng trường hợp nét đã kịp bắt đầu (đang kéo) trước khi ngón 2 chạm vào
       suppressDraw = true;
       beginPinch();
     }
@@ -486,6 +520,15 @@
     activePointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
     if(activePointers.size >= 2){
       updatePinch();
+    } else if(pendingStrokeTimer && pendingStrokeEvent && e.pointerId === pendingStrokeEvent.pointerId){
+      // Đang trong lúc chờ xác nhận (chưa beginStroke) mà ngón di chuyển rõ
+      // ràng -> chắc chắn là đang vẽ nét dài, bắt đầu vẽ ngay, không đợi hết
+      // PINCH_DETECT_DELAY nữa (tránh cảm giác trễ nét/mất nét đầu).
+      clearTimeout(pendingStrokeTimer);
+      pendingStrokeTimer = null;
+      beginStroke(pendingStrokeEvent);
+      pendingStrokeEvent = null;
+      continueStroke(e);
     } else if(drawing){
       continueStroke(e);
     }
@@ -493,6 +536,15 @@
   function releasePointer(e){
     activePointers.delete(e.pointerId);
     if(activePointers.size < 2) pinch = null;
+    // Nhấc ngón ra ngay trong lúc còn đang chờ xác nhận (chạm rất nhanh,
+    // không có ngón thứ 2, không di chuyển) -> đây là một cú TAP thật sự,
+    // vẫn cần vẽ chấm như hành vi cũ.
+    if(pendingStrokeTimer && pendingStrokeEvent && e.pointerId === pendingStrokeEvent.pointerId){
+      clearTimeout(pendingStrokeTimer);
+      pendingStrokeTimer = null;
+      beginStroke(pendingStrokeEvent);
+      pendingStrokeEvent = null;
+    }
     if(activePointers.size === 0){
       suppressDraw = false;
       endStroke();
@@ -501,6 +553,7 @@
   canvasViewport.addEventListener('pointerup', releasePointer);
   canvasViewport.addEventListener('pointercancel', releasePointer);
   canvasViewport.addEventListener('pointerleave', (e)=>{ if(activePointers.size<=1) releasePointer(e); });
+
 
   /* ---- realtime ---- */
   diag.socketIoScriptLoaded = !window.__socketIoLoadFailed && typeof io === 'function';
