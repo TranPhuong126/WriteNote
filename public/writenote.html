@@ -2197,7 +2197,6 @@
   function setSyncing(on){
     isSyncing = on;
     connectBtn.classList.toggle('primary', isSyncing); // xanh khi bật, xám khi tắt
-    connectBtn.textContent = isSyncing ? 'Đã kết nối' : 'Kết nối';
     if(syncStatusLabel) syncStatusLabel.textContent = isSyncing ? 'Đang bật' : 'Đang tắt';
   }
 
