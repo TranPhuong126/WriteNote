@@ -51,7 +51,7 @@
      duyệt di động render ra MÀN HÌNH ĐEN khi đang pinch-zoom (2 lớp
      transform trong suốt chồng nhau bị lỗi compositing trên một số máy).
      Chỉ 1 phần tử duy nhất bị transform, giống hệt cấu trúc gốc ban đầu. */
-  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:var(--paper);display:block;transform-origin:0 0;}
+  canvas{position:absolute;top:0;left:0;touch-action:none;background:var(--paper);display:block;transform-origin:0 0;}
   #zoomBadge{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;min-height:auto;white-space:nowrap;}
   #pageBadge{font-size:11px;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;cursor:pointer;touch-action:manipulation;}
   #pageBadge:active{transform:translateY(1px);}
@@ -200,6 +200,13 @@
    * Nhờ vậy toạ độ gửi lên server luôn được tính trên hệ gốc của tờ giấy,
    * bù trừ đúng scale/scroll hiện tại, nên luôn khớp với Laptop. */
   let baseWidth = 0, baseHeight = 0; // kích thước "tờ giấy" lúc zoom 100% (CSS px, không đổi theo transform)
+  // Cùng tỉ lệ trang giấy với bên laptop (CSS ".page-sheet{ aspect-ratio:595/842 }")
+  // — nhờ vậy cùng một toạ độ chuẩn hoá (0..1) luôn rơi đúng cùng một chỗ trên
+  // "tờ giấy" dù xem trên điện thoại hay laptop, bất kể tỉ lệ khung hình màn
+  // hình điện thoại là gì (trước đây điện thoại lấy nguyên khung nhìn màn
+  // hình làm "tờ giấy", lệch tỉ lệ so với laptop, nên dòng kẻ/chữ viết nhìn
+  // bị lệch nhau giữa hai máy dù cùng một nội dung).
+  const PAGE_ASPECT = 595 / 842;
   let scale = 1, panX = 0, panY = 0;
   const MIN_SCALE = 1, MAX_SCALE = 6;
   const activePointers = new Map(); // pointerId -> {x,y} toạ độ màn hình (clientX/clientY)
@@ -331,8 +338,8 @@
     // ảnh hưởng bởi CSS transform zoom/pan) — chứ không dùng
     // getBoundingClientRect() (kích thước đã bị scale khi đang zoom), để
     // tránh việc phóng to lại vô tình resize luôn độ phân giải vẽ.
-    const w = canvasViewport.clientWidth;
-    const h = canvasViewport.clientHeight;
+    const viewportW = canvasViewport.clientWidth;
+    const viewportH = canvasViewport.clientHeight;
     // FIX LỖI "TOÀN BỘ CANVAS BỊ TÔ ĐEN": nếu gọi resize() đúng lúc layout
     // CSS chưa ổn định (ví dụ: script chạy trước khi font/flexbox tính xong
     // kích thước), clientWidth/Height có thể trả về 0 hoặc một số rất nhỏ.
@@ -344,10 +351,22 @@
     // layout chưa xong chứ không phải người dùng thật sự có khung vẽ nhỏ
     // vậy) — resize() sẽ tự được gọi lại khi ResizeObserver phát hiện layout
     // đã ổn định.
-    if(w < 40 || h < 40) return;
+    if(viewportW < 40 || viewportH < 40) return;
+
+    // "Contain fit": tìm kích thước lớn nhất đúng tỉ lệ PAGE_ASPECT mà vẫn
+    // vừa trong khung nhìn hiện có, rồi canh giữa (letterbox) — xem giải
+    // thích ở khai báo PAGE_ASPECT phía trên.
+    let w = viewportW, h = w / PAGE_ASPECT;
+    if(h > viewportH){ h = viewportH; w = h * PAGE_ASPECT; }
+    w = Math.round(w); h = Math.round(h);
+
     if(w === baseWidth && h === baseHeight) return;
     const img = ctx.getImageData ? safeGetImage() : null;
     baseWidth = w; baseHeight = h;
+    board.style.width = w + 'px';
+    board.style.height = h + 'px';
+    board.style.left = Math.round((viewportW - w) / 2) + 'px';
+    board.style.top = Math.round((viewportH - h) / 2) + 'px';
     board.width = w * 2;
     board.height = h * 2;
     ctx.setTransform(2,0,0,2,0,0);
