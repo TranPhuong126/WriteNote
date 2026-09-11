@@ -713,13 +713,14 @@
       <label>Link trực tiếp</label>
       <input type="text" id="directLink" readonly>
       <div class="modal-actions">
-        <button class="btn primary" id="connectBtn">Kết nối</button>
+        <button class="btn" id="connectBtn">Kết nối</button>
         <button class="btn" id="copyLinkBtn">Copy link</button>
       </div>
       <div class="modal-actions">
         <button class="btn" id="openLinkBtn">Mở trang</button>
       </div>
       <div class="conn-status" id="connStatus">Chưa kết nối</div>
+      <div class="conn-status" id="syncStatus">Đồng bộ: <b id="syncStatusLabel">Đang tắt</b></div>
     </div>
     <div id="qrCanvas" aria-label="Mã QR liên kết điện thoại"></div>
     <p class="hint">Quét mã QR để mở trang trên điện thoại.</p>
@@ -1500,7 +1501,7 @@
       page.data = null;
       page.elements = [];
       // room = tài liệu (không đổi), pageId cho biết xoá nội dung của trang nào.
-      if(socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
+      if(isSyncing && socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
     });
     saveState();
     renderDocumentStack();
@@ -1523,7 +1524,7 @@
       page.bgColor = '#FBF7EE';
       saveState();
       renderDocumentStack();
-      if(socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
+      if(isSyncing && socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
       broadcastPageChange();
       return;
     }
@@ -2151,6 +2152,7 @@
     if(!base) return;
     if(socket){ socket.disconnect(); }
     socket = io(base, {transports:['websocket','polling']});
+    const thisSocket = socket; // để phân biệt với sự kiện 'disconnect' trễ của 1 socket CŨ đã bị thay thế
     const statusEl = document.getElementById('connStatus');
     statusEl.textContent = 'Đang kết nối...';
     socket.on('connect', ()=>{
@@ -2159,13 +2161,60 @@
       joinRoom(currentDocument().id);
       broadcastPageChange();
     });
-    socket.on('disconnect', ()=>{ statusEl.textContent = 'Mất kết nối'; });
+    socket.on('disconnect', ()=>{
+      statusEl.textContent = 'Mất kết nối';
+      // Chỉ tự tắt isSyncing nếu đây đúng là socket đang hoạt động hiện tại.
+      // Nếu không check, sự kiện 'disconnect' bắn trễ của một socket CŨ (do
+      // connectSocket() gọi lại, ví dụ lúc người dùng vừa bấm bật đồng bộ và
+      // cần kết nối lại) có thể vô tình tắt luôn isSyncing vừa mới bật xong.
+      if(socket === thisSocket) setSyncing(false);
+    });
     socket.on('connect_error', (err)=>{
       statusEl.textContent = 'Không kết nối được tới máy chủ' + (err && err.message ? ' (' + err.message + ')' : '');
     });
     bindSocketEvents();
   }
-  document.getElementById('connectBtn').addEventListener('click', connectSocket);
+
+  // ===== Bật/tắt quyền truyền dữ liệu nét vẽ từ Laptop sang Điện thoại =====
+  // isSyncing CHỈ quyết định việc Laptop có PHÁT (emit) sự kiện vẽ hay
+  // không — hoàn toàn tách biệt với việc socket đã kết nối hay chưa (socket
+  // vẫn tự kết nối như cũ khi mở modal "Liên kết điện thoại", xem
+  // document.getElementById('linkBtn')...). Nhờ tách biệt này, người dùng có
+  // thể giữ kết nối Socket.io luôn sẵn sàng nhưng chủ động bật/tắt việc chia
+  // sẻ nét vẽ bất cứ lúc nào bằng đúng 1 nút bấm, không cần ngắt/kết nối lại
+  // toàn bộ đường truyền.
+  //
+  // Mặc định (isSyncing = false): laptop vẫn vẽ/viết bình thường ở local,
+  // nhưng KHÔNG emit bất kỳ sự kiện vẽ nào (stroke/shape/text/clear) ra
+  // ngoài -> điện thoại không nhận được nét mới nào.
+  // Khi bật (isSyncing = true): mọi thao tác vẽ trên Laptop lập tức emit đi
+  // như bình thường (giữ nguyên logic emit/hiển thị hiện có, chỉ thêm điều
+  // kiện bọc ngoài).
+  let isSyncing = false;
+  const connectBtn = document.getElementById('connectBtn');
+  const syncStatusLabel = document.getElementById('syncStatusLabel');
+
+  function setSyncing(on){
+    isSyncing = on;
+    connectBtn.classList.toggle('primary', isSyncing); // xanh khi bật, xám khi tắt
+    connectBtn.textContent = isSyncing ? 'Đã kết nối' : 'Kết nối';
+    if(syncStatusLabel) syncStatusLabel.textContent = isSyncing ? 'Đang bật' : 'Đang tắt';
+  }
+
+  connectBtn.addEventListener('click', ()=>{
+    // Bật đồng bộ thì cần đảm bảo đã có kết nối Socket.io trước, nếu chưa có
+    // hoặc đã bị rớt thì kết nối lại trước khi mở đường truyền.
+    if(!isSyncing){
+      if(!socket || !socket.connected) connectSocket();
+      setSyncing(true);
+    } else {
+      // Bấm lại lần nữa để tắt: chỉ đóng đường truyền vẽ, KHÔNG ngắt hẳn
+      // socket — điện thoại vẫn hiển thị "đã kết nối" nhưng không nhận nét
+      // mới nào cho tới khi bật lại.
+      setSyncing(false);
+    }
+  });
+
 
   function joinRoom(roomId){
     if(!socket || !socket.connected) return;
@@ -2257,6 +2306,9 @@
   // nhỏ, ví dụ ~400px) sang laptop (board.width=1190px) sẽ bị SAI TỈ LỆ độ
   // dày, khiến chữ trông mảnh/khác hẳn so với lúc viết trên điện thoại.
   function emitStrokeSegment(phase, x, y, strokeId){
+    // isSyncing=false -> Laptop vẫn vẽ local bình thường (hàm này chỉ lo
+    // phần PHÁT đi), nhưng không emit gì cả nên Điện thoại không nhận được.
+    if(!isSyncing) return;
     if(!socket || !socket.connected || !currentRoom) return;
     const payload = {room: currentRoom, pageId: currentPage().id, strokeId, phase};
     if(phase==='start'){
@@ -2268,17 +2320,21 @@
     socket.emit('stroke', payload);
   }
   function emitShape(shape, x1,y1,x2,y2){
+    if(!isSyncing) return;
     if(!socket || !socket.connected || !currentRoom) return;
     socket.emit('shape', {room: currentRoom, pageId: currentPage().id, shape, color: state.color, width: state.stroke / board.width, x1,y1,x2,y2});
   }
   function emitText(text, x, y, fontSize){
+    if(!isSyncing) return;
     if(!socket || !socket.connected || !currentRoom) return;
     socket.emit('text', {room: currentRoom, pageId: currentPage().id, text, x, y, color: state.color, fontSize});
   }
   function emitClear(){
+    if(!isSyncing) return;
     if(!socket || !socket.connected || !currentRoom) return;
     socket.emit('clear', {room: currentRoom, pageId: currentPage().id});
   }
+
 
   // ===== Vẽ lại nét vẽ nhận từ xa (điện thoại -> laptop hoặc laptop khác) =====
   // Trước đây mỗi điểm chạm được nối bằng ĐOẠN THẲNG (ctx.lineTo). Khi các
