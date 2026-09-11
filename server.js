@@ -8,7 +8,10 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-app.use(express.static(__dirname));
+// Chỉ phục vụ công khai thư mục public/ — KHÔNG phục vụ __dirname (root), vì
+// root còn chứa server.js/package.json/.env... để lộ mã nguồn/thiết lập server
+// ra internet là không an toàn khi đã deploy lên domain công khai (Render).
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Liệt kê tất cả IPv4 LAN khả dụng (loại bỏ địa chỉ nội bộ 127.0.0.1)
 function listLanIPv4Candidates() {
@@ -38,14 +41,14 @@ function pickLanIP() {
 }
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'writenote.html'));
+  res.sendFile(path.join(__dirname, 'public', 'writenote.html'));
 });
 
 // Trang điện thoại: dùng chung 1 file cho cả /mobile và /mobile.html
 // (QR trên writenote.html trỏ thẳng tới "/mobile.html?room=..."), để điện
 // thoại luôn tải được đúng trang vẽ, không bị 404.
 app.get(['/mobile', '/mobile.html'], (req, res) => {
-  res.sendFile(path.join(__dirname, 'writenote-phone-fixed.html'));
+  res.sendFile(path.join(__dirname, 'public', 'writenote-phone-fixed.html'));
 });
 
 app.get('/network-address', (req, res) => {

@@ -709,7 +709,7 @@
     <div class="advanced">
       <div style="font-size:12.5px;color:var(--muted);">Trang: <b id="linkPageName">—</b></div>
       <label>Địa chỉ máy chủ đồng bộ</label>
-      <input type="text" id="serverAddr" value="http://localhost:3001">
+      <input type="text" id="serverAddr" placeholder="Tự động theo địa chỉ đang mở trang này" value="">
       <label>Link trực tiếp</label>
       <input type="text" id="directLink" readonly>
       <div class="modal-actions">
@@ -2051,14 +2051,29 @@
 
   async function getQrServerBase(){
     const input = document.getElementById('serverAddr');
-    const currentBase = input.value.replace(/\/$/,'') || window.location.origin;
+    const loc = window.location;
+
+    // Trang đang được mở qua một địa chỉ mà điện thoại CŨNG dùng được thẳng
+    // (domain công khai như Render, hoặc IP LAN thật kiểu 192.168.x.x) —
+    // dùng ngay chính địa chỉ đó, không cần dò thêm.
+    if(loc.hostname !== 'localhost' && loc.hostname !== '127.0.0.1'){
+      const base = loc.origin;
+      input.value = base;
+      return base;
+    }
+
+    // Chỉ khi mở bằng "localhost" (chạy thử trên máy) mới cần dò IP LAN thật,
+    // vì "localhost" trên điện thoại sẽ trỏ vào chính điện thoại chứ không
+    // phải máy tính. Lưu ý: /network-address chỉ đáng tin trên máy chủ chạy
+    // cục bộ — trên môi trường cloud như Render, đây là IP nội bộ container
+    // (không phải mạng LAN thật) nên không dùng cho trường hợp domain công khai ở trên.
+    const currentBase = input.value.replace(/\/$/,'') || loc.origin;
     try{
       const response = await fetch('/network-address', {cache:'no-store'});
       if(response.ok){
         const network = await response.json();
         if(network.address && network.port){
-          const currentUrl = new URL(currentBase);
-          const base = currentUrl.protocol + '//' + network.address + ':' + network.port;
+          const base = loc.protocol + '//' + network.address + ':' + network.port;
           input.value = base;
           return base;
         }

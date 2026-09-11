@@ -1,7 +1,7 @@
 {
-  "name": "whynot-realtime-server",
+  "name": "writenote-realtime-server",
   "version": "1.0.0",
-  "description": "May chu dong bo thoi gian thuc cho Why not (ghi chu & ve tay) qua QR",
+  "description": "May chu dong bo thoi gian thuc cho WriteNote (ghi chu & ve tay) qua QR, chay duoc tren Render",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
