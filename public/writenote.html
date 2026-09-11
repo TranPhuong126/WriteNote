@@ -856,6 +856,8 @@
         currentPage().bgColor = c;
         document.getElementById('pageBgColorCustom').value = c;
         applyBgClass(); renderBgSwatches(); saveState();
+        // Báo ngay cho điện thoại để nền trang luôn khớp màu với laptop.
+        broadcastPageChange();
       });
       bgSwatchesEl.appendChild(d);
     });
@@ -1373,6 +1375,7 @@
   });
   document.getElementById('pageBgColorCustom').addEventListener('input', (e)=>{
     currentPage().bgColor = e.target.value; applyBgClass(); renderBgSwatches(); saveState();
+    broadcastPageChange();
   });
 
   const strokeRange = document.getElementById('strokeRange');
@@ -1408,6 +1411,8 @@
     if(!opt) return;
     currentPage().bg = opt.dataset.bg;
     applyBgClass(); saveState();
+    // Đổi kiểu nền (kẻ ngang/ô vuông/chấm bi/trơn) cũng phải đồng bộ ngay.
+    broadcastPageChange();
   });
 
   document.getElementById('newDocBtn').addEventListener('click', ()=>{
@@ -2182,6 +2187,10 @@
       pageName: p.name,
       pageIndex: pageIndexOf(p),
       pageCount: currentDocument().pages.length,
+      // Kèm kiểu nền + màu nền trang để điện thoại vẽ lại đúng "tờ giấy"
+      // đang hiển thị trên laptop (yêu cầu đồng bộ giao diện trang).
+      bg: p.bg,
+      bgColor: p.bgColor,
       dataUrl: board ? board.toDataURL() : null
     });
   }
@@ -2195,7 +2204,9 @@
         pageId: p.id,
         pageName: p.name,
         pageIndex: pageIndexOf(p),
-        pageCount: currentDocument().pages.length
+        pageCount: currentDocument().pages.length,
+        bg: p.bg,
+        bgColor: p.bgColor
       });
     });
     socket.on('snapshot', ({dataUrl})=>{
@@ -2221,6 +2232,22 @@
     });
     socket.on('peer-joined', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; broadcastPageChange(); });
     socket.on('peer-left', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
+
+    // Điện thoại chạm vào ô "Trang X/Y" để yêu cầu đổi trang. Laptop là nơi
+    // giữ dữ liệu thật nên tự chuyển trang bằng switchToPage() có sẵn (hàm
+    // này đã tự lo lưu snapshot trang cũ + broadcastPageChange() trang mới),
+    // rồi mọi thiết bị trong room (kể cả điện thoại vừa yêu cầu) sẽ nhận lại
+    // đúng trang mới qua sự kiện 'change-page' như bình thường.
+    socket.on('nav-page', (p)=>{
+      if(!p || p.room!==currentRoom) return;
+      const doc = currentDocument();
+      const total = doc.pages.length;
+      if(total <= 0) return;
+      let idx = doc.currentPage;
+      if(p.direction === 'prev') idx = (idx - 1 + total) % total;
+      else idx = (idx + 1) % total;
+      switchToPage(idx);
+    });
   }
 
   function emitStrokeSegment(phase, x, y, strokeId){
@@ -2314,6 +2341,17 @@
     }
   }
   init();
+
+  // Tự động kết nối realtime NGAY KHI TẢI TRANG, không chờ người dùng mở
+  // hộp thoại "Liên kết điện thoại" hay bấm nút "Kết nối" thủ công. Đây là
+  // nguyên nhân chính khiến trước đây nét vẽ từ laptop không tới điện thoại
+  // trừ khi vào tab liên kết và bấm kết nối: nếu chưa từng mở hộp thoại đó,
+  // biến `socket` vẫn là null nên mọi emitStrokeSegment/emitShape/emitText
+  // đều bị bỏ qua ngay từ đầu (điều kiện `if(!socket...) return;`).
+  (async function autoConnectPhoneSync(){
+    try{ await getQrServerBase(); }catch(e){}
+    if(!socket || !socket.connected) connectSocket();
+  })();
 
   window.addEventListener('beforeunload', saveCurrentSnapshot);
 })();

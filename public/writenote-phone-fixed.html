@@ -39,14 +39,31 @@
   #debugPanel{margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;background:#fff;color:var(--ink);font-size:11.5px;line-height:1.6;font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;}
   /* Viewport: khung nhìn cố định, "cắt" (clip) phần canvas bị phóng to/kéo ra
      ngoài rìa màn hình. Đây là hệ quy chiếu KHÔNG đổi để tính toạ độ chạm. */
-  #canvasViewport{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:var(--paper);}
+  #canvasViewport{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:var(--paper-edge);}
+  /* Lớp nền "tờ giấy" (kiểu kẻ ngang / ô vuông / chấm bi / trơn + màu nền) —
+     tách riêng khỏi canvas vẽ, đồng bộ y hệt kiểu nền trang đang hiển thị
+     bên laptop. Dùng chung transform-origin/kích thước với canvas và luôn
+     nhận đúng CSS transform (scale/pan) mà canvas đang có, để khi phóng to/
+     kéo trên điện thoại, hoa văn nền vẫn khớp tuyệt đối với canvas ở trên. */
+  .page-bg{
+    position:absolute;top:0;left:0;width:100%;height:100%;
+    transform-origin:0 0;pointer-events:none;
+    --page-paper:#FBF7EE;
+    background-color:var(--page-paper);
+  }
+  .page-bg.bg-ruled{ background-image: repeating-linear-gradient(var(--page-paper) 0 27px, var(--line-strong) 27px 28px); }
+  .page-bg.bg-grid{ background-image: repeating-linear-gradient(var(--line-strong) 0 1px, transparent 1px 24px), repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px 24px); }
+  .page-bg.bg-dot{ background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size:18px 18px; }
+  .page-bg.bg-blank{ background-image:none; }
   /* canvas là "tờ giấy logic" kích thước cố định (bằng đúng khung nhìn lúc
      zoom 100%) — phóng to/kéo chỉ áp dụng transform lên chính canvas này,
      KHÔNG resize lại buffer vẽ bên trong, nên nét vẽ luôn khớp tuyệt đối
-     với toạ độ gốc của tờ giấy, bất kể đang zoom/pan ở mức nào. */
-  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:var(--paper);display:block;transform-origin:0 0;}
+     với toạ độ gốc của tờ giấy, bất kể đang zoom/pan ở mức nào. Nền canvas
+     để trong suốt vì kiểu/màu nền thật sự nằm ở lớp .page-bg phía dưới. */
+  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:transparent;display:block;transform-origin:0 0;}
   #zoomBadge{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;min-height:auto;white-space:nowrap;}
-  #pageBadge{font-size:11px;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;}
+  #pageBadge{font-size:11px;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;cursor:pointer;touch-action:manipulation;}
+  #pageBadge:active{transform:translateY(1px);}
   .toolbar{
     display:flex;align-items:center;gap:7px;padding:9px 12px;
     padding-bottom:max(9px, env(safe-area-inset-bottom));
@@ -78,7 +95,7 @@
   <header>
     <div class="wordmark">Write<span>Note</span></div>
     <div class="headerRight">
-      <div id="pageBadge" hidden></div>
+      <button id="pageBadge" type="button" hidden title="Chạm để đổi trang"></button>
       <div id="status">Đang khởi tạo...</div>
       <button id="zoomBadge" type="button" title="Chạm để đặt lại 100%">100%</button>
       <button id="debugToggle" type="button">Chi tiết</button>
@@ -89,6 +106,7 @@
   <div id="roomNotice" hidden></div>
   <div id="debugPanel" hidden></div>
   <div id="canvasViewport">
+    <div id="pageBg" class="page-bg bg-ruled"></div>
     <canvas id="board"></canvas>
   </div>
   <div class="toolbar" id="toolbar">
@@ -115,6 +133,7 @@
   const params = new URLSearchParams(location.search);
   const room = params.get('room');
   const canvasViewport = document.getElementById('canvasViewport');
+  const pageBg = document.getElementById('pageBg');
   const board = document.getElementById('board');
   const ctx = board.getContext('2d');
   const statusEl = document.getElementById('status');
@@ -133,12 +152,21 @@
   let currentPageName = null;
   let currentPageIndex = null;
   let currentPageCount = null;
+  // Kiểu nền (ruled/grid/dot/blank) + màu nền trang — nhận từ laptop qua
+  // 'change-page'/'snapshot', luôn khớp với trang đang xem trên laptop.
+  let currentPageBg = 'ruled';
+  let currentPageBgColor = '#FBF7EE';
 
   function updatePageBadge(){
     if(currentPageName && Number.isInteger(currentPageIndex) && Number.isInteger(currentPageCount)){
       pageBadge.hidden = false;
-      pageBadge.textContent = currentPageName + ' (' + (currentPageIndex+1) + '/' + currentPageCount + ')';
+      // Mũi tên "›" gợi ý có thể chạm vào để chuyển sang trang kế tiếp.
+      pageBadge.textContent = currentPageName + ' (' + (currentPageIndex+1) + '/' + currentPageCount + ')' + (currentPageCount > 1 ? ' ›' : '');
     }
+  }
+  function applyPageBackground(){
+    pageBg.className = 'page-bg bg-' + currentPageBg;
+    pageBg.style.setProperty('--page-paper', currentPageBgColor);
   }
   function applyPageMeta(p){
     if(!p) return;
@@ -146,7 +174,10 @@
     if(p.pageName) currentPageName = p.pageName;
     if(Number.isInteger(p.pageIndex)) currentPageIndex = p.pageIndex;
     if(Number.isInteger(p.pageCount)) currentPageCount = p.pageCount;
+    if(p.bg) currentPageBg = p.bg;
+    if(p.bgColor) currentPageBgColor = p.bgColor;
     updatePageBadge();
+    applyPageBackground();
   }
 
   /* ================= Zoom / Pan (Vấn đề 1) =================
@@ -165,7 +196,11 @@
   let suppressDraw = false; // true trong lúc đang pinch, tránh vẽ nhầm khi nhấc bớt ngón
 
   function applyTransform(){
-    board.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+    const t = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+    board.style.transform = t;
+    // Nền trang phải zoom/pan cùng lúc với canvas, nếu không hoa văn nền sẽ
+    // trôi lệch khỏi nét vẽ khi người dùng phóng to/kéo trên điện thoại.
+    pageBg.style.transform = t;
     zoomBadge.textContent = Math.round(scale * 100) + '%';
   }
   function clampPan(){
@@ -306,6 +341,16 @@
   resize();
   applyTransform();
   updatePageBadge();
+  applyPageBackground();
+
+  // Chạm vào ô "Trang X/Y" để yêu cầu laptop chuyển sang trang kế tiếp.
+  // Laptop mới là nơi giữ dữ liệu thật của tài liệu nên điện thoại chỉ GỬI
+  // YÊU CẦU qua socket; khi laptop đổi trang xong sẽ tự phát lại đúng nội
+  // dung + kiểu nền của trang mới cho điện thoại (xem socket.on('change-page')).
+  pageBadge.addEventListener('click', ()=>{
+    if(!room || !socket || !socket.connected) return;
+    socket.emit('nav-page', {room, direction:'next'});
+  });
 
   document.getElementById('toolbar').addEventListener('click', (e)=>{
     const btn = e.target.closest('button[data-tool]');

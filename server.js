@@ -110,6 +110,14 @@ io.on('connection', (socket) => {
     if (joinedRoom) socket.to(joinedRoom).emit('clear', payload);
   });
 
+  // Điện thoại bấm vào ô số trang -> yêu cầu laptop chuyển trang (tiến/lùi).
+  // Laptop là nơi giữ dữ liệu thật của tài liệu nên chỉ laptop mới thực sự
+  // đổi trang; sau khi đổi, laptop sẽ tự phát lại 'change-page' (kèm ảnh +
+  // kiểu nền trang mới) cho toàn bộ phòng, kể cả điện thoại vừa yêu cầu.
+  socket.on('nav-page', (payload) => {
+    if (joinedRoom) socket.to(joinedRoom).emit('nav-page', payload);
+  });
+
   socket.on('disconnect', () => {
     if (joinedRoom && roomMembers.has(joinedRoom)) {
       const members = roomMembers.get(joinedRoom);
