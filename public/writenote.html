@@ -902,7 +902,8 @@
     renderBgSwatches();
     history = [board.toDataURL()];
     historyIndex = 0;
-    if(socket && socket.connected) joinRoom(currentPage().id);
+    // Không đổi room — chỉ báo cho điện thoại biết đã sang trang mới.
+    broadcastPageChange();
   }
 
   function updatePageIndicator(){
@@ -1265,7 +1266,10 @@
     renderBgSwatches();
     history = [board.toDataURL()];
     historyIndex = 0;
-    if(socket && socket.connected) joinRoom(currentPage().id);
+    // Đổi hẳn TÀI LIỆU (khác hẳn phiên làm việc) thì mới cần đổi room; đổi
+    // trang bên trong cùng một tài liệu thì KHÔNG đổi room (xem switchToPage).
+    if(socket && socket.connected) joinRoom(currentDocument().id);
+    broadcastPageChange();
   }
 
   function switchToPage(i){
@@ -1280,7 +1284,8 @@
     renderBgSwatches();
     history = [board.toDataURL()];
     historyIndex = 0;
-    if(socket && socket.connected) joinRoom(currentPage().id);
+    // Cùng tài liệu -> room giữ nguyên, chỉ báo đổi trang cho điện thoại.
+    broadcastPageChange();
   }
 
   function saveCurrentSnapshot(){
@@ -1419,6 +1424,9 @@
     renderBgSwatches();
     history=[board.toDataURL()];
     historyIndex=0;
+    // Tài liệu mới = phiên/room mới hoàn toàn.
+    if(socket && socket.connected) joinRoom(currentDocument().id);
+    broadcastPageChange();
   });
 
   document.getElementById('duplicateDocBtn').addEventListener('click', ()=>{
@@ -1436,6 +1444,8 @@
     loadPageOntoCanvas();
     applyBgClass();
     renderBgSwatches();
+    if(socket && socket.connected) joinRoom(currentDocument().id);
+    broadcastPageChange();
   });
 
   document.getElementById('deleteDocBtn').addEventListener('click', ()=>{
@@ -1484,7 +1494,8 @@
     doc.pages.forEach(page=>{
       page.data = null;
       page.elements = [];
-      if(socket && socket.connected) socket.emit('clear', {room: page.id});
+      // room = tài liệu (không đổi), pageId cho biết xoá nội dung của trang nào.
+      if(socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
     });
     saveState();
     renderDocumentStack();
@@ -1492,6 +1503,7 @@
     renderBgSwatches();
     history = [board.toDataURL()];
     historyIndex = 0;
+    broadcastPageChange();
   });
   document.getElementById('deletePageBtn').addEventListener('click', ()=>{
     closeMenus();
@@ -1506,6 +1518,8 @@
       page.bgColor = '#FBF7EE';
       saveState();
       renderDocumentStack();
+      if(socket && socket.connected) socket.emit('clear', {room: currentRoom, pageId: page.id});
+      broadcastPageChange();
       return;
     }
     if(!window.confirm('Bạn có chắc muốn xóa trang hiện tại?')) return;
@@ -1516,6 +1530,8 @@
     loadPageOntoCanvas();
     applyBgClass();
     renderBgSwatches();
+    // Cùng tài liệu -> room giữ nguyên, chỉ báo trang hiện tại (đã đổi do xoá) cho điện thoại.
+    broadcastPageChange();
   });
 
   function renderPageBackground(context, page, w, h){
@@ -2090,7 +2106,11 @@
 
   async function regenerateQr(){
     const base = await getQrServerBase();
-    const url = base + '/mobile.html?room=' + encodeURIComponent(currentPage().id);
+    // room = id của TÀI LIỆU (cố định suốt phiên làm việc), page chỉ là tham
+    // số tham khảo ban đầu — không dùng room = id của TRANG nữa, vì đổi trang
+    // sẽ không còn làm đổi room/mất kết nối điện thoại (xem broadcastPageChange()).
+    const url = base + '/mobile.html?room=' + encodeURIComponent(currentDocument().id) +
+      '&page=' + encodeURIComponent(currentPage().id);
     document.getElementById('directLink').value = url;
     const qrContainer = document.getElementById('qrCanvas');
     qrContainer.innerHTML = '';
@@ -2130,7 +2150,9 @@
     statusEl.textContent = 'Đang kết nối...';
     socket.on('connect', ()=>{
       statusEl.textContent = 'Đã kết nối';
-      joinRoom(currentPage().id);
+      // room = tài liệu (không đổi khi chuyển trang) — xem ghi chú tại regenerateQr().
+      joinRoom(currentDocument().id);
+      broadcastPageChange();
     });
     socket.on('disconnect', ()=>{ statusEl.textContent = 'Mất kết nối'; });
     socket.on('connect_error', (err)=>{
@@ -2146,20 +2168,50 @@
     socket.emit('join-room', {room: roomId});
   }
 
+  // Với room dùng chung cho cả tài liệu (nhiều trang), phải kèm pageId vào
+  // mọi gói tin vẽ để phân biệt "vẽ cho trang nào" — tránh nét vẽ của trang
+  // khác lẫn vào trang đang xem.
+  function pageIndexOf(page){ return currentDocument().pages.indexOf(page); }
+
+  function broadcastPageChange(){
+    if(!socket || !socket.connected || !currentRoom) return;
+    const p = currentPage();
+    socket.emit('change-page', {
+      room: currentRoom,
+      pageId: p.id,
+      pageName: p.name,
+      pageIndex: pageIndexOf(p),
+      pageCount: currentDocument().pages.length,
+      dataUrl: board ? board.toDataURL() : null
+    });
+  }
+
   function bindSocketEvents(){
     socket.on('request-snapshot', ({forId})=>{
-      socket.emit('snapshot-response', {forId, dataUrl: board.toDataURL()});
+      const p = currentPage();
+      socket.emit('snapshot-response', {
+        forId,
+        dataUrl: board.toDataURL(),
+        pageId: p.id,
+        pageName: p.name,
+        pageIndex: pageIndexOf(p),
+        pageCount: currentDocument().pages.length
+      });
     });
     socket.on('snapshot', ({dataUrl})=>{
+      if(!dataUrl) return;
       const img = new Image();
       img.onload = ()=>{ ctx.drawImage(img,0,0,board.width,board.height); pushHistory(); };
       img.src = dataUrl;
     });
-    socket.on('stroke', (p)=>{ if(p.room===currentRoom) applyRemoteStroke(p); });
-    socket.on('shape', (p)=>{ if(p.room===currentRoom) applyRemoteShape(p); });
-    socket.on('text', (p)=>{ if(p.room===currentRoom) applyRemoteText(p); });
+    // Điện thoại là thiết bị "theo sau" — laptop mới là nơi tạo/xoá/chuyển
+    // trang, nên laptop bỏ qua sự kiện change-page đến từ nơi khác (nếu có).
+    socket.on('change-page', ()=>{});
+    socket.on('stroke', (p)=>{ if(p.room===currentRoom && p.pageId===currentPage().id) applyRemoteStroke(p); });
+    socket.on('shape', (p)=>{ if(p.room===currentRoom && p.pageId===currentPage().id) applyRemoteShape(p); });
+    socket.on('text', (p)=>{ if(p.room===currentRoom && p.pageId===currentPage().id) applyRemoteText(p); });
     socket.on('clear', (p)=>{
-      if(p.room!==currentRoom) return;
+      if(p.room!==currentRoom || p.pageId!==currentPage().id) return;
       currentPage().data = null;
       currentPage().elements = [];
       ctx.clearRect(0,0,board.width,board.height);
@@ -2167,13 +2219,13 @@
       if(container) renderPageElements(currentPage(), container);
       saveState();
     });
-    socket.on('peer-joined', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
+    socket.on('peer-joined', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; broadcastPageChange(); });
     socket.on('peer-left', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
   }
 
   function emitStrokeSegment(phase, x, y, strokeId){
     if(!socket || !socket.connected || !currentRoom) return;
-    const payload = {room: currentRoom, strokeId, phase};
+    const payload = {room: currentRoom, pageId: currentPage().id, strokeId, phase};
     if(phase==='start'){
       payload.tool = tool;
       payload.color = state.color;
@@ -2184,15 +2236,15 @@
   }
   function emitShape(shape, x1,y1,x2,y2){
     if(!socket || !socket.connected || !currentRoom) return;
-    socket.emit('shape', {room: currentRoom, shape, color: state.color, width: state.stroke, x1,y1,x2,y2});
+    socket.emit('shape', {room: currentRoom, pageId: currentPage().id, shape, color: state.color, width: state.stroke, x1,y1,x2,y2});
   }
   function emitText(text, x, y, fontSize){
     if(!socket || !socket.connected || !currentRoom) return;
-    socket.emit('text', {room: currentRoom, text, x, y, color: state.color, fontSize});
+    socket.emit('text', {room: currentRoom, pageId: currentPage().id, text, x, y, color: state.color, fontSize});
   }
   function emitClear(){
     if(!socket || !socket.connected || !currentRoom) return;
-    socket.emit('clear', {room: currentRoom});
+    socket.emit('clear', {room: currentRoom, pageId: currentPage().id});
   }
 
   function applyRemoteStroke(p){

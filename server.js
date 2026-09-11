@@ -80,8 +80,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('snapshot-response', ({ forId, dataUrl }) => {
-    if (forId) io.to(forId).emit('snapshot', { dataUrl });
+  // Chuyển tiếp TOÀN BỘ payload (trừ forId) thay vì chỉ mỗi dataUrl, để các
+  // trường bổ sung như pageId/pageName/pageIndex/pageCount (dùng cho việc
+  // đồng bộ đúng trang đang xem) cũng được truyền tới đúng thiết bị mới join.
+  socket.on('snapshot-response', ({ forId, ...rest }) => {
+    if (forId) io.to(forId).emit('snapshot', rest);
+  });
+
+  // Sự kiện đổi trang: room KHÔNG đổi khi chuyển trang (xem client), chỉ có
+  // pageId (và metadata trang) được gửi kèm để các thiết bị khác trong cùng
+  // room tự cập nhật đúng trang đang xem mà không bị rớt kết nối/room.
+  socket.on('change-page', (payload) => {
+    if (joinedRoom) socket.to(joinedRoom).emit('change-page', payload);
   });
 
   socket.on('stroke', (payload) => {

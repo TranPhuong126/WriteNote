@@ -37,7 +37,16 @@
   #roomNotice{margin:10px 12px 0;padding:10px 12px;border:1px solid rgba(155,50,50,.25);border-radius:9px;background:#fff5f3;color:var(--err);font-size:12px;line-height:1.5;}
   #roomNotice ul{margin:6px 0 0;padding-left:18px;}
   #debugPanel{margin:10px 12px 0;padding:10px 12px;border:1px solid var(--line-strong);border-radius:9px;background:#fff;color:var(--ink);font-size:11.5px;line-height:1.6;font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;}
-  canvas{flex:1;width:100%;min-height:0;touch-action:none;background:var(--paper);display:block;}
+  /* Viewport: khung nhìn cố định, "cắt" (clip) phần canvas bị phóng to/kéo ra
+     ngoài rìa màn hình. Đây là hệ quy chiếu KHÔNG đổi để tính toạ độ chạm. */
+  #canvasViewport{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:var(--paper);}
+  /* canvas là "tờ giấy logic" kích thước cố định (bằng đúng khung nhìn lúc
+     zoom 100%) — phóng to/kéo chỉ áp dụng transform lên chính canvas này,
+     KHÔNG resize lại buffer vẽ bên trong, nên nét vẽ luôn khớp tuyệt đối
+     với toạ độ gốc của tờ giấy, bất kể đang zoom/pan ở mức nào. */
+  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:var(--paper);display:block;transform-origin:0 0;}
+  #zoomBadge{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;min-height:auto;white-space:nowrap;}
+  #pageBadge{font-size:11px;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;}
   .toolbar{
     display:flex;align-items:center;gap:7px;padding:9px 12px;
     padding-bottom:max(9px, env(safe-area-inset-bottom));
@@ -69,7 +78,9 @@
   <header>
     <div class="wordmark">Write<span>Note</span></div>
     <div class="headerRight">
+      <div id="pageBadge" hidden></div>
       <div id="status">Đang khởi tạo...</div>
+      <button id="zoomBadge" type="button" title="Chạm để đặt lại 100%">100%</button>
       <button id="debugToggle" type="button">Chi tiết</button>
     </div>
   </header>
@@ -77,7 +88,9 @@
   <div id="fatalError"></div>
   <div id="roomNotice" hidden></div>
   <div id="debugPanel" hidden></div>
-  <canvas id="board"></canvas>
+  <div id="canvasViewport">
+    <canvas id="board"></canvas>
+  </div>
   <div class="toolbar" id="toolbar">
     <button data-tool="pen" class="active">Bút</button>
     <button data-tool="eraser">Tẩy</button>
@@ -101,6 +114,7 @@
 
   const params = new URLSearchParams(location.search);
   const room = params.get('room');
+  const canvasViewport = document.getElementById('canvasViewport');
   const board = document.getElementById('board');
   const ctx = board.getContext('2d');
   const statusEl = document.getElementById('status');
@@ -108,6 +122,93 @@
   const fatalErrorEl = document.getElementById('fatalError');
   const debugPanel = document.getElementById('debugPanel');
   const debugToggle = document.getElementById('debugToggle');
+  const zoomBadge = document.getElementById('zoomBadge');
+  const pageBadge = document.getElementById('pageBadge');
+
+  /* ================= Trang hiện tại (đồng bộ với laptop) =================
+   * roomId (biến `room` ở trên) là cố định cho cả PHIÊN LÀM VIỆC (tài liệu),
+   * không đổi khi laptop chuyển trang. pageId mới là thứ phân biệt "đang xem
+   * trang nào" bên trong phiên đó — nhận qua sự kiện 'change-page'/'snapshot'. */
+  let currentPageId = params.get('page') || null;
+  let currentPageName = null;
+  let currentPageIndex = null;
+  let currentPageCount = null;
+
+  function updatePageBadge(){
+    if(currentPageName && Number.isInteger(currentPageIndex) && Number.isInteger(currentPageCount)){
+      pageBadge.hidden = false;
+      pageBadge.textContent = currentPageName + ' (' + (currentPageIndex+1) + '/' + currentPageCount + ')';
+    }
+  }
+  function applyPageMeta(p){
+    if(!p) return;
+    if(p.pageId) currentPageId = p.pageId;
+    if(p.pageName) currentPageName = p.pageName;
+    if(Number.isInteger(p.pageIndex)) currentPageIndex = p.pageIndex;
+    if(Number.isInteger(p.pageCount)) currentPageCount = p.pageCount;
+    updatePageBadge();
+  }
+
+  /* ================= Zoom / Pan (Vấn đề 1) =================
+   * `board` (canvas) có ĐỘ PHÂN GIẢI VẼ CỐ ĐỊNH (baseWidth*2 x baseHeight*2,
+   * xem resize()) — đây chính là "Logical Canvas": hệ toạ độ tuyệt đối của
+   * tờ giấy, giống hệt dù đang zoom/pan ở mức nào. Phóng to/kéo trên điện
+   * thoại chỉ là một CSS transform (scale + translate) áp lên canvas để
+   * thay đổi KHUNG NHÌN hiển thị — không hề đụng tới toạ độ vẽ/gửi socket.
+   * Nhờ vậy toạ độ gửi lên server luôn được tính trên hệ gốc của tờ giấy,
+   * bù trừ đúng scale/scroll hiện tại, nên luôn khớp với Laptop. */
+  let baseWidth = 0, baseHeight = 0; // kích thước "tờ giấy" lúc zoom 100% (CSS px, không đổi theo transform)
+  let scale = 1, panX = 0, panY = 0;
+  const MIN_SCALE = 1, MAX_SCALE = 6;
+  const activePointers = new Map(); // pointerId -> {x,y} toạ độ màn hình (clientX/clientY)
+  let pinch = null; // {prevDist, prevMid} khi có 2 ngón đang chạm
+  let suppressDraw = false; // true trong lúc đang pinch, tránh vẽ nhầm khi nhấc bớt ngón
+
+  function applyTransform(){
+    board.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+    zoomBadge.textContent = Math.round(scale * 100) + '%';
+  }
+  function clampPan(){
+    const view = canvasViewport.getBoundingClientRect();
+    const contentW = baseWidth * scale, contentH = baseHeight * scale;
+    const minX = Math.min(0, view.width - contentW);
+    const minY = Math.min(0, view.height - contentH);
+    panX = Math.max(minX, Math.min(0, panX));
+    panY = Math.max(minY, Math.min(0, panY));
+  }
+  function resetView(){
+    scale = 1; panX = 0; panY = 0;
+    applyTransform();
+  }
+  zoomBadge.addEventListener('click', resetView);
+
+  function ptsArray(){ return [...activePointers.values()]; }
+  function dist2(pts){ return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y); }
+  function mid2(pts){ return { x:(pts[0].x + pts[1].x) / 2, y:(pts[0].y + pts[1].y) / 2 }; }
+
+  function beginPinch(){
+    pinch = { prevDist: dist2(ptsArray()), prevMid: mid2(ptsArray()) };
+  }
+  function updatePinch(){
+    if(!pinch) return;
+    const rect = board.getBoundingClientRect();
+    // Điểm trên tờ giấy hiện đang nằm dưới 2 ngón tay (tính theo transform hiện tại)
+    const contentX = (pinch.prevMid.x - rect.left) / scale;
+    const contentY = (pinch.prevMid.y - rect.top) / scale;
+    const pts = ptsArray();
+    const newDist = dist2(pts);
+    const newMid = mid2(pts);
+    let newScale = scale * (newDist / pinch.prevDist);
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+    // Dời khung nhìn sao cho đúng điểm đó vẫn nằm dưới vị trí ngón tay mới
+    panX = panX + (newMid.x - rect.left) - contentX * newScale;
+    panY = panY + (newMid.y - rect.top) - contentY * newScale;
+    scale = newScale;
+    clampPan();
+    applyTransform();
+    pinch.prevDist = newDist;
+    pinch.prevMid = newMid;
+  }
 
   /* ================= Chẩn đoán & báo lỗi ================= */
   // startTime + trạng thái được gom lại để hiển thị trong bảng "Chi tiết"
@@ -184,10 +285,17 @@
   const remoteStrokes = {};
 
   function resize(){
-    const rect = board.getBoundingClientRect();
+    // QUAN TRỌNG: dùng clientWidth/clientHeight (kích thước layout, KHÔNG bị
+    // ảnh hưởng bởi CSS transform zoom/pan) — chứ không dùng
+    // getBoundingClientRect() (kích thước đã bị scale khi đang zoom), để
+    // tránh việc phóng to lại vô tình resize luôn độ phân giải vẽ.
+    const w = canvasViewport.clientWidth;
+    const h = canvasViewport.clientHeight;
+    if(w === baseWidth && h === baseHeight) return;
     const img = ctx.getImageData ? safeGetImage() : null;
-    board.width = rect.width * 2;
-    board.height = rect.height * 2;
+    baseWidth = w; baseHeight = h;
+    board.width = w * 2;
+    board.height = h * 2;
     ctx.setTransform(2,0,0,2,0,0);
     if(img) ctx.putImageData(img,0,0);
   }
@@ -196,6 +304,8 @@
   }
   window.addEventListener('resize', resize);
   resize();
+  applyTransform();
+  updatePageBadge();
 
   document.getElementById('toolbar').addEventListener('click', (e)=>{
     const btn = e.target.closest('button[data-tool]');
@@ -211,7 +321,7 @@
   });
   document.getElementById('clearBtn').addEventListener('click', ()=>{
     ctx.clearRect(0,0,board.width,board.height);
-    if(socket && socket.connected) socket.emit('clear', {room});
+    if(socket && socket.connected) socket.emit('clear', {room, pageId: currentPageId});
   });
 
   function strokeStyleFor(t){
@@ -220,50 +330,87 @@
     else { ctx.globalCompositeOperation='source-over'; ctx.strokeStyle=color; ctx.lineWidth=WIDTH_PEN; }
   }
 
+  // Quy đổi toạ độ CHẠM (màn hình) -> toạ độ TUYỆT ĐỐI trên tờ giấy (Logical
+  // Canvas), bù trừ scale (zoom) hiện tại — bất kể đang zoom/pan thế nào,
+  // kết quả trả về luôn nằm trong hệ [0..baseWidth] x [0..baseHeight] cố định,
+  // giống hệt hệ toạ độ mà ctx dùng để vẽ (xem resize()).
   function getPos(e){
     const rect = board.getBoundingClientRect();
     const t = e.touches ? e.touches[0] : e;
-    return { x:(t.clientX-rect.left), y:(t.clientY-rect.top) };
+    return { x:(t.clientX-rect.left)/scale, y:(t.clientY-rect.top)/scale };
   }
 
   function emitStrokeSegment(phase, x, y, strokeId){
     if(!socket || !socket.connected) return;
-    const rect = board.getBoundingClientRect();
-    const payload = {room, strokeId, phase};
+    const payload = {room, pageId: currentPageId, strokeId, phase};
     if(phase==='start'){
       payload.tool = tool;
       payload.color = color;
       payload.width = tool==='eraser' ? WIDTH_ERASER : WIDTH_PEN;
     }
-    if(x!==null && x!==undefined){ payload.x = x/rect.width; payload.y = y/rect.height; }
+    // Chia cho baseWidth/baseHeight (kích thước "tờ giấy" cố định lúc zoom
+    // 100%, KHÔNG phải kích thước khung nhìn đang hiển thị) để toạ độ gửi đi
+    // luôn là toạ độ tuyệt đối trên trang, khớp với Laptop dù đang zoom/pan.
+    if(x!==null && x!==undefined){ payload.x = x/baseWidth; payload.y = y/baseHeight; }
     socket.emit('stroke', payload);
   }
 
-  board.addEventListener('pointerdown', (e)=>{
-    board.setPointerCapture(e.pointerId);
+  function beginStroke(e){
     drawing = true;
     const p = getPos(e);
     strokeStyleFor(tool);
     ctx.beginPath(); ctx.moveTo(p.x,p.y);
     currentStrokeId = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
     emitStrokeSegment('start', p.x, p.y, currentStrokeId);
-  });
-  board.addEventListener('pointermove', (e)=>{
+  }
+  function continueStroke(e){
     if(!drawing) return;
     const p = getPos(e);
     ctx.lineTo(p.x,p.y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(p.x,p.y);
     if(currentStrokeId) emitStrokeSegment('move', p.x, p.y, currentStrokeId);
-  });
-  function end(){
+  }
+  function endStroke(){
     if(!drawing) return;
     drawing = false;
     if(currentStrokeId) emitStrokeSegment('end', null, null, currentStrokeId);
     currentStrokeId = null;
   }
-  board.addEventListener('pointerup', end);
-  board.addEventListener('pointerleave', end);
-  board.addEventListener('pointercancel', end);
+
+  // Tất cả tương tác chạm (vẽ 1 ngón, phóng to/kéo 2 ngón) đều lắng nghe trên
+  // #canvasViewport — một hệ quy chiếu ỔN ĐỊNH không bị transform — để việc
+  // quy đổi toạ độ luôn nhất quán, tách biệt hẳn khỏi canvas đang bị zoom/pan.
+  canvasViewport.addEventListener('pointerdown', (e)=>{
+    canvasViewport.setPointerCapture(e.pointerId);
+    activePointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if(activePointers.size === 1 && !suppressDraw){
+      beginStroke(e);
+    } else if(activePointers.size === 2){
+      endStroke(); // huỷ nét đang vẽ dở bằng 1 ngón (nếu có) khi ngón thứ 2 chạm vào
+      suppressDraw = true;
+      beginPinch();
+    }
+  });
+  canvasViewport.addEventListener('pointermove', (e)=>{
+    if(!activePointers.has(e.pointerId)) return;
+    activePointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if(activePointers.size >= 2){
+      updatePinch();
+    } else if(drawing){
+      continueStroke(e);
+    }
+  });
+  function releasePointer(e){
+    activePointers.delete(e.pointerId);
+    if(activePointers.size < 2) pinch = null;
+    if(activePointers.size === 0){
+      suppressDraw = false;
+      endStroke();
+    }
+  }
+  canvasViewport.addEventListener('pointerup', releasePointer);
+  canvasViewport.addEventListener('pointercancel', releasePointer);
+  canvasViewport.addEventListener('pointerleave', (e)=>{ if(activePointers.size<=1) releasePointer(e); });
 
   /* ---- realtime ---- */
   diag.socketIoScriptLoaded = !window.__socketIoLoadFailed && typeof io === 'function';
@@ -347,31 +494,63 @@
     });
 
     socket.on('request-snapshot', ({forId})=>{
-      socket.emit('snapshot-response', {forId, dataUrl: board.toDataURL()});
+      socket.emit('snapshot-response', {
+        forId, dataUrl: board.toDataURL(),
+        pageId: currentPageId, pageName: currentPageName,
+        pageIndex: currentPageIndex, pageCount: currentPageCount
+      });
     });
-    socket.on('snapshot', ({dataUrl})=>{
+    socket.on('snapshot', (p)=>{
+      applyPageMeta(p);
+      if(!p.dataUrl) return;
       const img = new Image();
-      img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); ctx.drawImage(img,0,0,board.width/2,board.height/2); };
+      img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); ctx.drawImage(img,0,0,baseWidth,baseHeight); };
       img.onerror = ()=>{ showFatalError('Không tải được ảnh snapshot từ máy tính.', 'snapshot'); };
-      img.src = dataUrl;
+      img.src = p.dataUrl;
+    });
+    // Vấn đề 2: Laptop đổi trang KHÔNG đổi room — chỉ gửi sự kiện này kèm
+    // pageId + ảnh chụp trang mới, điện thoại tự chuyển sang hiển thị đúng
+    // trang đó, không cần quét lại mã QR hay tải lại trang.
+    socket.on('change-page', (p)=>{
+      if(p.room!==room) return;
+      applyPageMeta(p);
+      remoteStrokes && Object.keys(remoteStrokes).forEach(k=>delete remoteStrokes[k]);
+      ctx.clearRect(0,0,board.width,board.height);
+      if(p.dataUrl){
+        const img = new Image();
+        img.onload = ()=>{ ctx.clearRect(0,0,board.width,board.height); ctx.drawImage(img,0,0,baseWidth,baseHeight); };
+        img.onerror = ()=>{ showFatalError('Không tải được ảnh của trang mới.', 'change-page'); };
+        img.src = p.dataUrl;
+      }
     });
     socket.on('stroke', handleRemoteStroke);
     socket.on('shape', handleRemoteShape);
     socket.on('text', handleRemoteText);
-    socket.on('clear', (p)=>{ if(p.room===room) ctx.clearRect(0,0,board.width,board.height); });
+    socket.on('clear', (p)=>{
+      if(p.room!==room) return;
+      if(currentPageId && p.pageId && p.pageId!==currentPageId) return;
+      ctx.clearRect(0,0,board.width,board.height);
+    });
+  }
+
+  // Với room dùng chung cho cả tài liệu (nhiều trang), mọi gói tin vẽ đến từ
+  // trang KHÁC với trang đang xem trên điện thoại sẽ bị bỏ qua.
+  function isForCurrentPage(p){
+    if(p.room!==room) return false;
+    if(currentPageId && p.pageId && p.pageId!==currentPageId) return false;
+    return true;
   }
 
   function handleRemoteStroke(p){
-    if(p.room!==room) return;
-    const rect = board.getBoundingClientRect();
+    if(!isForCurrentPage(p)) return;
     if(p.phase==='start'){
-      remoteStrokes[p.strokeId] = { x: p.x*rect.width, y: p.y*rect.height, tool: p.tool, color: p.color, width: p.width };
+      remoteStrokes[p.strokeId] = { x: p.x*baseWidth, y: p.y*baseHeight, tool: p.tool, color: p.color, width: p.width };
       return;
     }
     const st = remoteStrokes[p.strokeId];
     if(p.phase==='move'){
       if(!st) return;
-      const x = p.x*rect.width, y = p.y*rect.height;
+      const x = p.x*baseWidth, y = p.y*baseHeight;
       ctx.save();
       ctx.lineJoin='round'; ctx.lineCap='round';
       ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
@@ -388,12 +567,11 @@
     }
   }
   function handleRemoteShape(p){
-    if(p.room!==room) return;
-    const rect = board.getBoundingClientRect();
+    if(!isForCurrentPage(p)) return;
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
     ctx.strokeStyle=p.color; ctx.lineWidth=p.width; ctx.globalCompositeOperation='source-over';
-    const x1=p.x1*rect.width, y1=p.y1*rect.height, x2=p.x2*rect.width, y2=p.y2*rect.height;
+    const x1=p.x1*baseWidth, y1=p.y1*baseHeight, x2=p.x2*baseWidth, y2=p.y2*baseHeight;
     if(p.shape==='line' || p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
     else if(p.shape==='rect'){ ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1)); }
     else if(p.shape==='ellipse'){ ctx.beginPath(); ctx.ellipse((x1+x2)/2,(y1+y2)/2,Math.abs(x2-x1)/2,Math.abs(y2-y1)/2,0,0,Math.PI*2); ctx.stroke(); }
@@ -401,14 +579,13 @@
     ctx.restore();
   }
   function handleRemoteText(p){
-    if(p.room!==room) return;
-    const rect = board.getBoundingClientRect();
+    if(!isForCurrentPage(p)) return;
     ctx.save();
     ctx.fillStyle = p.color;
-    ctx.font = p.fontSize*(rect.width) + "px 'Caveat', cursive";
+    ctx.font = p.fontSize*baseWidth + "px 'Caveat', cursive";
     ctx.textBaseline='top';
-    const x=p.x*rect.width, y=p.y*rect.height;
-    p.text.split('\n').forEach((line,i)=>{ ctx.fillText(line, x, y+i*(p.fontSize*rect.width+4)); });
+    const x=p.x*baseWidth, y=p.y*baseHeight;
+    p.text.split('\n').forEach((line,i)=>{ ctx.fillText(line, x, y+i*(p.fontSize*baseWidth+4)); });
     ctx.restore();
   }
 })();
