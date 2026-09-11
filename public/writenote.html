@@ -2293,18 +2293,35 @@
   // point) của đường cong. Kỹ thuật này chỉ cần nhớ 2 điểm gần nhất (không
   // cần đổi giao thức truyền dữ liệu), cho nét cong tự nhiên hơn hẳn so với
   // nối thẳng, đặc biệt rõ khi phóng to sang canvas độ phân giải khác.
+  // Giới hạn an toàn cho độ dày nét nhận từ xa: không cho phép quá 15% chiều
+  // rộng trang giấy. Đây là lưới an toàn cuối cùng chống lỗi "canvas bị tô
+  // đen toàn bộ" — nếu vì bất kỳ lý do gì (mất gói tin, lệch thời điểm đo
+  // kích thước ở thiết bị gửi, dữ liệu hỏng...) một gói tin đến với độ dày
+  // được chuẩn hoá sai và bị phóng đại hàng chục/hàng trăm lần, ctx.lineWidth
+  // sẽ không bao giờ đủ lớn để một nét vẽ đơn phủ kín cả trang.
+  const MAX_REMOTE_STROKE_WIDTH_RATIO = 0.15;
+  function sanitizeRemoteWidth(rawWidth, board){
+    const w = Number(rawWidth) || 0;
+    if(!Number.isFinite(w) || w <= 0) return 1;
+    const maxAllowed = Math.min(board.width, board.height) * MAX_REMOTE_STROKE_WIDTH_RATIO;
+    return Math.min(w, maxAllowed);
+  }
   function applyRemoteStroke(p){
     if(p.phase==='start'){
+      // Bỏ qua toạ độ không hợp lệ (NaN/Infinity/null) thay vì để chúng biến
+      // thành 0 một cách âm thầm (0*NaN, null*n=0...) và vẽ nhầm từ góc trang.
+      if(!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
       const x = p.x*board.width, y = p.y*board.height;
       remoteStrokes[p.strokeId] = {
         prevRaw: {x, y}, prevMid: {x, y},
         tool: p.tool, color: p.color,
-        width: (p.width || 0) * board.width
+        width: sanitizeRemoteWidth((p.width || 0) * board.width, board)
       };
       return;
     }
     const st = remoteStrokes[p.strokeId];
     if(!st) return;
+    if((p.phase==='move' || p.phase==='end') && p.x!==null && p.x!==undefined && (!Number.isFinite(p.x) || !Number.isFinite(p.y))) return;
     if(p.phase==='move'){
       const x = p.x*board.width, y = p.y*board.height;
       const mid = { x: (st.prevRaw.x + x) / 2, y: (st.prevRaw.y + y) / 2 };
@@ -2344,7 +2361,7 @@
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
     ctx.globalCompositeOperation='source-over';
-    ctx.strokeStyle=p.color; ctx.lineWidth=(p.width || 0)*board.width;
+    ctx.strokeStyle=p.color; ctx.lineWidth=sanitizeRemoteWidth((p.width || 0)*board.width, board);
     const x1=p.x1*board.width, y1=p.y1*board.height, x2=p.x2*board.width, y2=p.y2*board.height;
     if(p.shape==='line'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
     else if(p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); drawArrowHead(x1,y1,x2,y2); }

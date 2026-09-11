@@ -333,6 +333,18 @@
     // tránh việc phóng to lại vô tình resize luôn độ phân giải vẽ.
     const w = canvasViewport.clientWidth;
     const h = canvasViewport.clientHeight;
+    // FIX LỖI "TOÀN BỘ CANVAS BỊ TÔ ĐEN": nếu gọi resize() đúng lúc layout
+    // CSS chưa ổn định (ví dụ: script chạy trước khi font/flexbox tính xong
+    // kích thước), clientWidth/Height có thể trả về 0 hoặc một số rất nhỏ.
+    // baseWidth bị lưu sai giá trị này khiến emitStrokeSegment() sau đó chia
+    // (WIDTH_PEN / baseWidth) ra một tỉ lệ khổng lồ; bên laptop nhân ngược
+    // lại theo board.width sẽ ra ctx.lineWidth cực lớn -> một nét vẽ phủ kín
+    // hết cả trang giấy, trông như màn hình bị tô đen. Vì vậy: bỏ qua các
+    // phép đo có kích thước bất thường (< 40px, gần như chắc chắn là do
+    // layout chưa xong chứ không phải người dùng thật sự có khung vẽ nhỏ
+    // vậy) — resize() sẽ tự được gọi lại khi ResizeObserver phát hiện layout
+    // đã ổn định.
+    if(w < 40 || h < 40) return;
     if(w === baseWidth && h === baseHeight) return;
     const img = ctx.getImageData ? safeGetImage() : null;
     baseWidth = w; baseHeight = h;
@@ -346,6 +358,23 @@
   }
   window.addEventListener('resize', resize);
   resize();
+  // Dùng thêm ResizeObserver thay vì chỉ trông cậy vào 1 lần gọi resize() lúc
+  // tải trang: ResizeObserver tự động gọi lại resize() ngay khi layout của
+  // canvasViewport thực sự ổn định (kể cả khi nguyên nhân là font/ảnh tải
+  // xong chứ không phải sự kiện 'resize' của window), đảm bảo baseWidth luôn
+  // khớp với kích thước thật trước khi người dùng kịp đặt bút vẽ.
+  if(window.ResizeObserver){
+    new ResizeObserver(()=>resize()).observe(canvasViewport);
+  } else {
+    // Trình duyệt cũ không có ResizeObserver: thử đo lại vài lần trong giây
+    // đầu tiên để vẫn bắt được kích thước đúng sau khi layout ổn định.
+    let retries = 0;
+    const retryTimer = setInterval(()=>{
+      resize();
+      retries++;
+      if(baseWidth >= 40 || retries > 20) clearInterval(retryTimer);
+    }, 100);
+  }
   applyTransform();
   updatePageBadge();
   applyPageBackground();
@@ -394,6 +423,11 @@
 
   function emitStrokeSegment(phase, x, y, strokeId){
     if(!socket || !socket.connected) return;
+    // Chặn phòng hờ: không bao giờ chia cho baseWidth/baseHeight bằng 0 hoặc
+    // âm — đây chính là nguyên nhân gây lỗi "canvas bị tô đen" (xem ghi chú
+    // trong resize()). Nếu vì lý do gì đó vẫn lọt tới đây với kích thước
+    // chưa hợp lệ, bỏ qua gói tin thay vì gửi đi một tỉ lệ méo mó.
+    if(!(baseWidth > 0) || !(baseHeight > 0)) return;
     const payload = {room, pageId: currentPageId, strokeId, phase};
     if(phase==='start'){
       payload.tool = tool;
@@ -602,19 +636,31 @@
   // laptop: nối trung điểm của cặp điểm liền trước với trung điểm của cặp
   // điểm hiện tại bằng một đường cong (control point = điểm chạm ở giữa),
   // thay vì nối thẳng — giúp chữ nhận từ laptop cũng mượt mà, không góc cạnh.
+  // Lưới an toàn giống hệt bên laptop: không cho phép một nét vẽ nhận từ xa
+  // có độ dày vượt quá 15% kích thước trang, để tránh lỗi "canvas bị tô đen
+  // toàn bộ" nếu dữ liệu chuẩn hoá (x/y/width) từ thiết bị gửi bị sai lệch.
+  function sanitizeRemoteWidth(rawWidth){
+    const w = Number(rawWidth) || 0;
+    if(!Number.isFinite(w) || w <= 0) return 1;
+    const maxAllowed = Math.min(baseWidth, baseHeight) * 0.15;
+    return Math.min(w, maxAllowed);
+  }
   function handleRemoteStroke(p){
     if(!isForCurrentPage(p)) return;
+    if(baseWidth <= 0 || baseHeight <= 0) return;
     if(p.phase==='start'){
+      if(!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
       const x = p.x*baseWidth, y = p.y*baseHeight;
       remoteStrokes[p.strokeId] = {
         prevRaw: {x, y}, prevMid: {x, y},
         tool: p.tool, color: p.color,
-        width: (p.width || 0) * baseWidth
+        width: sanitizeRemoteWidth((p.width || 0) * baseWidth)
       };
       return;
     }
     const st = remoteStrokes[p.strokeId];
     if(!st) return;
+    if(p.x!==null && p.x!==undefined && (!Number.isFinite(p.x) || !Number.isFinite(p.y))) return;
     if(p.phase==='move'){
       const x = p.x*baseWidth, y = p.y*baseHeight;
       const mid = { x: (st.prevRaw.x + x) / 2, y: (st.prevRaw.y + y) / 2 };
@@ -650,7 +696,7 @@
     if(!isForCurrentPage(p)) return;
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.strokeStyle=p.color; ctx.lineWidth=(p.width || 0)*baseWidth; ctx.globalCompositeOperation='source-over';
+    ctx.strokeStyle=p.color; ctx.lineWidth=sanitizeRemoteWidth((p.width || 0)*baseWidth); ctx.globalCompositeOperation='source-over';
     const x1=p.x1*baseWidth, y1=p.y1*baseHeight, x2=p.x2*baseWidth, y2=p.y2*baseHeight;
     if(p.shape==='line' || p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
     else if(p.shape==='rect'){ ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1)); }
