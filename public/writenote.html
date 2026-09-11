@@ -704,7 +704,7 @@
 </div>
 
 <div class="modal-overlay" id="linkModalOverlay">
-  <div class="modal hidden-advanced">
+  <div class="modal">
     <h3>Liên kết điện thoại</h3>
     <div class="advanced">
       <div style="font-size:12.5px;color:var(--muted);">Trang: <b id="linkPageName">—</b></div>
@@ -2026,10 +2026,14 @@
     }
   });
 
-  document.getElementById('linkBtn').addEventListener('click', ()=>{
+  document.getElementById('linkBtn').addEventListener('click', async ()=>{
     document.getElementById('linkPageName').textContent = currentPage().name;
     document.getElementById('linkModalOverlay').style.display='flex';
-    regenerateQr();
+    await regenerateQr();
+    // Tự động kết nối ngay khi mở hộp thoại liên kết, thay vì bắt người
+    // dùng phải tự bấm "Kết nối" thì mới đồng bộ được — đây chính là lý do
+    // 2 thiết bị vẽ độc lập mà không báo lỗi gì (chưa từng có ai bấm nút đó).
+    if(!socket || !socket.connected) connectSocket();
   });
   document.getElementById('closeModal').addEventListener('click', ()=>{
     document.getElementById('linkModalOverlay').style.display='none';
@@ -2117,8 +2121,9 @@
     document.getElementById('connStatus').textContent = 'Thư viện QR chưa tải được';
   }
 
-  document.getElementById('connectBtn').addEventListener('click', ()=>{
+  function connectSocket(){
     const base = document.getElementById('serverAddr').value.replace(/\/$/,'');
+    if(!base) return;
     if(socket){ socket.disconnect(); }
     socket = io(base, {transports:['websocket','polling']});
     const statusEl = document.getElementById('connStatus');
@@ -2128,9 +2133,12 @@
       joinRoom(currentPage().id);
     });
     socket.on('disconnect', ()=>{ statusEl.textContent = 'Mất kết nối'; });
-    socket.on('connect_error', ()=>{ statusEl.textContent = 'Không kết nối được tới máy chủ'; });
+    socket.on('connect_error', (err)=>{
+      statusEl.textContent = 'Không kết nối được tới máy chủ' + (err && err.message ? ' (' + err.message + ')' : '');
+    });
     bindSocketEvents();
-  });
+  }
+  document.getElementById('connectBtn').addEventListener('click', connectSocket);
 
   function joinRoom(roomId){
     if(!socket || !socket.connected) return;
