@@ -2250,20 +2250,26 @@
     });
   }
 
+  // Với hệ toạ độ x/y đã được chuẩn hoá theo bề rộng/cao "tờ giấy" (0..1) để
+  // khớp giữa laptop (board.width=1190) và điện thoại (baseWidth tuỳ màn
+  // hình), độ dày nét (width) cũng cần chuẩn hoá THEO ĐÚNG CÁCH ĐÓ — chia
+  // cho board.width khi gửi đi — nếu không, nét vẽ từ điện thoại (baseWidth
+  // nhỏ, ví dụ ~400px) sang laptop (board.width=1190px) sẽ bị SAI TỈ LỆ độ
+  // dày, khiến chữ trông mảnh/khác hẳn so với lúc viết trên điện thoại.
   function emitStrokeSegment(phase, x, y, strokeId){
     if(!socket || !socket.connected || !currentRoom) return;
     const payload = {room: currentRoom, pageId: currentPage().id, strokeId, phase};
     if(phase==='start'){
       payload.tool = tool;
       payload.color = state.color;
-      payload.width = tool==='eraser' ? state.stroke*3 : state.stroke;
+      payload.width = (tool==='eraser' ? state.stroke*3 : state.stroke) / board.width;
     }
     if(x!==null && x!==undefined){ payload.x = x/board.width; payload.y = y/board.height; }
     socket.emit('stroke', payload);
   }
   function emitShape(shape, x1,y1,x2,y2){
     if(!socket || !socket.connected || !currentRoom) return;
-    socket.emit('shape', {room: currentRoom, pageId: currentPage().id, shape, color: state.color, width: state.stroke, x1,y1,x2,y2});
+    socket.emit('shape', {room: currentRoom, pageId: currentPage().id, shape, color: state.color, width: state.stroke / board.width, x1,y1,x2,y2});
   }
   function emitText(text, x, y, fontSize){
     if(!socket || !socket.connected || !currentRoom) return;
@@ -2274,27 +2280,61 @@
     socket.emit('clear', {room: currentRoom, pageId: currentPage().id});
   }
 
+  // ===== Vẽ lại nét vẽ nhận từ xa (điện thoại -> laptop hoặc laptop khác) =====
+  // Trước đây mỗi điểm chạm được nối bằng ĐOẠN THẲNG (ctx.lineTo). Khi các
+  // điểm này (lấy từ một canvas nhỏ như màn hình điện thoại) được nhân tỉ lệ
+  // lên một canvas lớn hơn nhiều (board.width=1190 của laptop), khoảng cách
+  // giữa các điểm bị "kéo giãn" ra, làm lộ rõ các góc gãy khúc -> chữ trông
+  // nguệch ngoạc dù trên điện thoại nhìn mượt.
+  // Khắc phục bằng kỹ thuật làm mượt nét vẽ tay phổ biến "trung điểm + đường
+  // cong bậc 2" (quadratic mid-point smoothing): với 2 điểm chạm liên tiếp,
+  // vẽ một đường cong từ trung điểm của cặp điểm TRƯỚC tới trung điểm của
+  // cặp điểm HIỆN TẠI, dùng điểm chạm ở giữa làm điểm điều khiển (control
+  // point) của đường cong. Kỹ thuật này chỉ cần nhớ 2 điểm gần nhất (không
+  // cần đổi giao thức truyền dữ liệu), cho nét cong tự nhiên hơn hẳn so với
+  // nối thẳng, đặc biệt rõ khi phóng to sang canvas độ phân giải khác.
   function applyRemoteStroke(p){
     if(p.phase==='start'){
-      remoteStrokes[p.strokeId] = { x: p.x*board.width, y: p.y*board.height, tool: p.tool, color: p.color, width: p.width };
+      const x = p.x*board.width, y = p.y*board.height;
+      remoteStrokes[p.strokeId] = {
+        prevRaw: {x, y}, prevMid: {x, y},
+        tool: p.tool, color: p.color,
+        width: (p.width || 0) * board.width
+      };
       return;
     }
     const st = remoteStrokes[p.strokeId];
+    if(!st) return;
     if(p.phase==='move'){
-      if(!st) return;
       const x = p.x*board.width, y = p.y*board.height;
+      const mid = { x: (st.prevRaw.x + x) / 2, y: (st.prevRaw.y + y) / 2 };
       ctx.save();
       ctx.lineJoin='round'; ctx.lineCap='round';
       ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
       ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
       ctx.lineWidth = st.width;
       ctx.beginPath();
-      ctx.moveTo(st.x, st.y);
-      ctx.lineTo(x, y);
+      ctx.moveTo(st.prevMid.x, st.prevMid.y);
+      ctx.quadraticCurveTo(st.prevRaw.x, st.prevRaw.y, mid.x, mid.y);
       ctx.stroke();
       ctx.restore();
-      st.x = x; st.y = y;
+      st.prevMid = mid;
+      st.prevRaw = {x, y};
     } else if(p.phase==='end'){
+      // Vẽ nốt đoạn cuối tới đúng điểm chạm cuối cùng để nét không hụt mất
+      // nửa đoạn cuối. Nếu người dùng chỉ CHẠM (không kéo) thì prevMid và
+      // prevRaw trùng nhau -> đoạn dài 0, nhờ lineCap:'round' tự vẽ thành
+      // 1 chấm tròn, đúng hành vi của một cú tap.
+      ctx.save();
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
+      ctx.lineWidth = st.width;
+      ctx.beginPath();
+      ctx.moveTo(st.prevMid.x, st.prevMid.y);
+      ctx.lineTo(st.prevRaw.x, st.prevRaw.y);
+      ctx.stroke();
+      ctx.restore();
       delete remoteStrokes[p.strokeId];
       saveCurrentSnapshot(); saveState();
     }
@@ -2304,7 +2344,7 @@
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
     ctx.globalCompositeOperation='source-over';
-    ctx.strokeStyle=p.color; ctx.lineWidth=p.width;
+    ctx.strokeStyle=p.color; ctx.lineWidth=(p.width || 0)*board.width;
     const x1=p.x1*board.width, y1=p.y1*board.height, x2=p.x2*board.width, y2=p.y2*board.height;
     if(p.shape==='line'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
     else if(p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); drawArrowHead(x1,y1,x2,y2); }
