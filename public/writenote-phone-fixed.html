@@ -40,27 +40,18 @@
   /* Viewport: khung nhìn cố định, "cắt" (clip) phần canvas bị phóng to/kéo ra
      ngoài rìa màn hình. Đây là hệ quy chiếu KHÔNG đổi để tính toạ độ chạm. */
   #canvasViewport{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:var(--paper-edge);}
-  /* Lớp nền "tờ giấy" (kiểu kẻ ngang / ô vuông / chấm bi / trơn + màu nền) —
-     tách riêng khỏi canvas vẽ, đồng bộ y hệt kiểu nền trang đang hiển thị
-     bên laptop. Dùng chung transform-origin/kích thước với canvas và luôn
-     nhận đúng CSS transform (scale/pan) mà canvas đang có, để khi phóng to/
-     kéo trên điện thoại, hoa văn nền vẫn khớp tuyệt đối với canvas ở trên. */
-  .page-bg{
-    position:absolute;top:0;left:0;width:100%;height:100%;
-    transform-origin:0 0;pointer-events:none;
-    --page-paper:#FBF7EE;
-    background-color:var(--page-paper);
-  }
-  .page-bg.bg-ruled{ background-image: repeating-linear-gradient(var(--page-paper) 0 27px, var(--line-strong) 27px 28px); }
-  .page-bg.bg-grid{ background-image: repeating-linear-gradient(var(--line-strong) 0 1px, transparent 1px 24px), repeating-linear-gradient(90deg, var(--line-strong) 0 1px, transparent 1px 24px); }
-  .page-bg.bg-dot{ background-image: radial-gradient(var(--line-strong) 1px, transparent 1.2px); background-size:18px 18px; }
-  .page-bg.bg-blank{ background-image:none; }
   /* canvas là "tờ giấy logic" kích thước cố định (bằng đúng khung nhìn lúc
      zoom 100%) — phóng to/kéo chỉ áp dụng transform lên chính canvas này,
      KHÔNG resize lại buffer vẽ bên trong, nên nét vẽ luôn khớp tuyệt đối
-     với toạ độ gốc của tờ giấy, bất kể đang zoom/pan ở mức nào. Nền canvas
-     để trong suốt vì kiểu/màu nền thật sự nằm ở lớp .page-bg phía dưới. */
-  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:transparent;display:block;transform-origin:0 0;}
+     với toạ độ gốc của tờ giấy, bất kể đang zoom/pan ở mức nào.
+     QUAN TRỌNG: kiểu nền + màu nền trang (đồng bộ với laptop) được set
+     TRỰC TIẾP làm CSS background của CHÍNH canvas này (qua JS, xem
+     applyPageBackground()) — KHÔNG dùng thêm một <div> nền riêng đè phía
+     dưới rồi tự đồng bộ transform cho nó, vì cách đó từng gây lỗi trình
+     duyệt di động render ra MÀN HÌNH ĐEN khi đang pinch-zoom (2 lớp
+     transform trong suốt chồng nhau bị lỗi compositing trên một số máy).
+     Chỉ 1 phần tử duy nhất bị transform, giống hệt cấu trúc gốc ban đầu. */
+  canvas{position:absolute;top:0;left:0;width:100%;height:100%;touch-action:none;background:var(--paper);display:block;transform-origin:0 0;}
   #zoomBadge{font-size:11px;font-weight:600;color:var(--muted);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;min-height:auto;white-space:nowrap;}
   #pageBadge{font-size:11px;color:var(--ink);background:rgba(255,255,255,.55);border:1px solid var(--line-strong);border-radius:999px;padding:6px 9px;white-space:nowrap;cursor:pointer;touch-action:manipulation;}
   #pageBadge:active{transform:translateY(1px);}
@@ -106,7 +97,6 @@
   <div id="roomNotice" hidden></div>
   <div id="debugPanel" hidden></div>
   <div id="canvasViewport">
-    <div id="pageBg" class="page-bg bg-ruled"></div>
     <canvas id="board"></canvas>
   </div>
   <div class="toolbar" id="toolbar">
@@ -133,7 +123,6 @@
   const params = new URLSearchParams(location.search);
   const room = params.get('room');
   const canvasViewport = document.getElementById('canvasViewport');
-  const pageBg = document.getElementById('pageBg');
   const board = document.getElementById('board');
   const ctx = board.getContext('2d');
   const statusEl = document.getElementById('status');
@@ -156,6 +145,9 @@
   // 'change-page'/'snapshot', luôn khớp với trang đang xem trên laptop.
   let currentPageBg = 'ruled';
   let currentPageBgColor = '#FBF7EE';
+  // Màu kẻ dùng cho mọi kiểu nền, lấy từ chính biến CSS --line-strong đã
+  // khai báo ở :root để không phải lặp lại giá trị màu ở 2 nơi.
+  const LINE_COLOR = (getComputedStyle(document.documentElement).getPropertyValue('--line-strong') || '').trim() || 'rgba(27,35,64,0.18)';
 
   function updatePageBadge(){
     if(currentPageName && Number.isInteger(currentPageIndex) && Number.isInteger(currentPageCount)){
@@ -165,8 +157,27 @@
     }
   }
   function applyPageBackground(){
-    pageBg.className = 'page-bg bg-' + currentPageBg;
-    pageBg.style.setProperty('--page-paper', currentPageBgColor);
+    // Set thẳng CSS background lên chính canvas (KHÔNG dùng div riêng), để
+    // tránh lỗi màn hình đen khi zoom trên di động (xem ghi chú CSS ở trên).
+    // Vì đây chỉ là style CSS của canvas (không phải bitmap vẽ bên trong),
+    // nét vẽ (ink) trên canvas vẫn hiển thị đè lên trên bình thường.
+    board.style.backgroundColor = currentPageBgColor;
+    const line = LINE_COLOR;
+    if(currentPageBg === 'grid'){
+      board.style.backgroundImage =
+        'repeating-linear-gradient(' + line + ' 0 1px, transparent 1px 24px),' +
+        'repeating-linear-gradient(90deg, ' + line + ' 0 1px, transparent 1px 24px)';
+      board.style.backgroundSize = '';
+    } else if(currentPageBg === 'dot'){
+      board.style.backgroundImage = 'radial-gradient(' + line + ' 1px, transparent 1.2px)';
+      board.style.backgroundSize = '18px 18px';
+    } else if(currentPageBg === 'blank'){
+      board.style.backgroundImage = 'none';
+      board.style.backgroundSize = '';
+    } else { // 'ruled' (mặc định)
+      board.style.backgroundImage = 'repeating-linear-gradient(' + currentPageBgColor + ' 0 27px, ' + line + ' 27px 28px)';
+      board.style.backgroundSize = '';
+    }
   }
   function applyPageMeta(p){
     if(!p) return;
@@ -196,11 +207,7 @@
   let suppressDraw = false; // true trong lúc đang pinch, tránh vẽ nhầm khi nhấc bớt ngón
 
   function applyTransform(){
-    const t = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
-    board.style.transform = t;
-    // Nền trang phải zoom/pan cùng lúc với canvas, nếu không hoa văn nền sẽ
-    // trôi lệch khỏi nét vẽ khi người dùng phóng to/kéo trên điện thoại.
-    pageBg.style.transform = t;
+    board.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
     zoomBadge.textContent = Math.round(scale * 100) + '%';
   }
   function clampPan(){
@@ -314,7 +321,7 @@
 
   let tool = 'pen';
   let color = '#1B2340';
-  const WIDTH_PEN = 3, WIDTH_ERASER = 10;
+  const WIDTH_PEN = 2, WIDTH_ERASER = 10;
   let drawing = false;
   let currentStrokeId = null;
   const remoteStrokes = {};
@@ -391,7 +398,11 @@
     if(phase==='start'){
       payload.tool = tool;
       payload.color = color;
-      payload.width = tool==='eraser' ? WIDTH_ERASER : WIDTH_PEN;
+      // Chuẩn hoá độ dày nét theo baseWidth (giống hệt cách chuẩn hoá x/y
+      // bên dưới), để khi laptop nhận và nhân lại theo board.width của nó,
+      // độ dày hiển thị luôn ĐÚNG TỈ LỆ so với lúc viết trên điện thoại —
+      // không còn bị mảnh/lệch do 2 canvas có độ phân giải khác nhau.
+      payload.width = (tool==='eraser' ? WIDTH_ERASER : WIDTH_PEN) / baseWidth;
     }
     // Chia cho baseWidth/baseHeight (kích thước "tờ giấy" cố định lúc zoom
     // 100%, KHÔNG phải kích thước khung nhìn đang hiển thị) để toạ độ gửi đi
@@ -586,28 +597,52 @@
     return true;
   }
 
+  // ===== Vẽ lại nét vẽ nhận từ Laptop (hoặc điện thoại khác) =====
+  // Dùng đúng kỹ thuật làm mượt "trung điểm + đường cong bậc 2" như bên
+  // laptop: nối trung điểm của cặp điểm liền trước với trung điểm của cặp
+  // điểm hiện tại bằng một đường cong (control point = điểm chạm ở giữa),
+  // thay vì nối thẳng — giúp chữ nhận từ laptop cũng mượt mà, không góc cạnh.
   function handleRemoteStroke(p){
     if(!isForCurrentPage(p)) return;
     if(p.phase==='start'){
-      remoteStrokes[p.strokeId] = { x: p.x*baseWidth, y: p.y*baseHeight, tool: p.tool, color: p.color, width: p.width };
+      const x = p.x*baseWidth, y = p.y*baseHeight;
+      remoteStrokes[p.strokeId] = {
+        prevRaw: {x, y}, prevMid: {x, y},
+        tool: p.tool, color: p.color,
+        width: (p.width || 0) * baseWidth
+      };
       return;
     }
     const st = remoteStrokes[p.strokeId];
+    if(!st) return;
     if(p.phase==='move'){
-      if(!st) return;
       const x = p.x*baseWidth, y = p.y*baseHeight;
+      const mid = { x: (st.prevRaw.x + x) / 2, y: (st.prevRaw.y + y) / 2 };
       ctx.save();
       ctx.lineJoin='round'; ctx.lineCap='round';
       ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
       ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
       ctx.lineWidth = st.width;
       ctx.beginPath();
-      ctx.moveTo(st.x, st.y);
-      ctx.lineTo(x, y);
+      ctx.moveTo(st.prevMid.x, st.prevMid.y);
+      ctx.quadraticCurveTo(st.prevRaw.x, st.prevRaw.y, mid.x, mid.y);
       ctx.stroke();
       ctx.restore();
-      st.x = x; st.y = y;
+      st.prevMid = mid;
+      st.prevRaw = {x, y};
     } else if(p.phase==='end'){
+      // Vẽ nốt đoạn cuối tới điểm chạm cuối; nếu chỉ tap (không kéo) thì
+      // đoạn có độ dài 0 -> lineCap:'round' tự vẽ thành 1 chấm tròn.
+      ctx.save();
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
+      ctx.lineWidth = st.width;
+      ctx.beginPath();
+      ctx.moveTo(st.prevMid.x, st.prevMid.y);
+      ctx.lineTo(st.prevRaw.x, st.prevRaw.y);
+      ctx.stroke();
+      ctx.restore();
       delete remoteStrokes[p.strokeId];
     }
   }
@@ -615,7 +650,7 @@
     if(!isForCurrentPage(p)) return;
     ctx.save();
     ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.strokeStyle=p.color; ctx.lineWidth=p.width; ctx.globalCompositeOperation='source-over';
+    ctx.strokeStyle=p.color; ctx.lineWidth=(p.width || 0)*baseWidth; ctx.globalCompositeOperation='source-over';
     const x1=p.x1*baseWidth, y1=p.y1*baseHeight, x2=p.x2*baseWidth, y2=p.y2*baseHeight;
     if(p.shape==='line' || p.shape==='arrow'){ ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); }
     else if(p.shape==='rect'){ ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1)); }
