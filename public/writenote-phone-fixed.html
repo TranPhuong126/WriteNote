@@ -165,17 +165,17 @@
     const line = LINE_COLOR;
     if(currentPageBg === 'grid'){
       board.style.backgroundImage =
-        'repeating-linear-gradient(' + line + ' 0 1px, transparent 1px 24px),' +
-        'repeating-linear-gradient(90deg, ' + line + ' 0 1px, transparent 1px 24px)';
+        'repeating-linear-gradient(' + line + ' 0 1px, transparent 1px 28px),' +
+        'repeating-linear-gradient(90deg, ' + line + ' 0 1px, transparent 1px 28px)';
       board.style.backgroundSize = '';
     } else if(currentPageBg === 'dot'){
       board.style.backgroundImage = 'radial-gradient(' + line + ' 1px, transparent 1.2px)';
-      board.style.backgroundSize = '18px 18px';
+      board.style.backgroundSize = '22px 22px';
     } else if(currentPageBg === 'blank'){
       board.style.backgroundImage = 'none';
       board.style.backgroundSize = '';
     } else { // 'ruled' (mặc định)
-      board.style.backgroundImage = 'repeating-linear-gradient(' + currentPageBgColor + ' 0 27px, ' + line + ' 27px 28px)';
+      board.style.backgroundImage = 'repeating-linear-gradient(' + currentPageBgColor + ' 0 31px, ' + line + ' 31px 32px)';
       board.style.backgroundSize = '';
     }
   }
@@ -487,6 +487,7 @@
   //   rõ ràng là vẽ nét dài, không phải chờ ngón 2) -> bắt đầu vẽ ngay lập
   //   tức, không đợi hết delay, để không tạo cảm giác trễ khi vẽ.
   const PINCH_DETECT_DELAY = 60; // ms
+  const MOVE_THRESHOLD = 4; // px màn hình (clientX/clientY) — dưới ngưỡng này coi là rung nhiễu, chưa tính là kéo vẽ
   let pendingStrokeTimer = null;
   let pendingStrokeEvent = null;
 
@@ -521,9 +522,18 @@
     if(activePointers.size >= 2){
       updatePinch();
     } else if(pendingStrokeTimer && pendingStrokeEvent && e.pointerId === pendingStrokeEvent.pointerId){
-      // Đang trong lúc chờ xác nhận (chưa beginStroke) mà ngón di chuyển rõ
-      // ràng -> chắc chắn là đang vẽ nét dài, bắt đầu vẽ ngay, không đợi hết
-      // PINCH_DETECT_DELAY nữa (tránh cảm giác trễ nét/mất nét đầu).
+      // Rung nhiễu cảm biến ngay sau khi chạm xuống luôn có vài phần trăm
+      // pixel dao động — nếu bắt đầu vẽ ngay khi phát hiện BẤT KỲ chuyển
+      // động nào (kể cả rung nhiễu cực nhỏ này), nét sẽ được begin+continue
+      // trong lúc gần như chưa đổi vị trí, tạo ra một đoạn nét cực ngắn mà
+      // do lineCap:'round' vẫn hiển thị y hệt một chấm tròn — đúng lỗi cũ,
+      // chỉ là do "chuyển động" chứ không phải do ngón 2 chạm vào nữa. Nên
+      // chỉ được xem là "chắc chắn đang kéo vẽ thật" khi di chuyển vượt qua
+      // một ngưỡng khoảng cách tối thiểu (MOVE_THRESHOLD), không phải chỉ
+      // cần có sai lệch khác 0.
+      const dx = e.clientX - pendingStrokeEvent.clientX;
+      const dy = e.clientY - pendingStrokeEvent.clientY;
+      if(Math.hypot(dx, dy) < MOVE_THRESHOLD) return; // vẫn trong ngưỡng rung nhiễu, tiếp tục chờ
       clearTimeout(pendingStrokeTimer);
       pendingStrokeTimer = null;
       beginStroke(pendingStrokeEvent);
