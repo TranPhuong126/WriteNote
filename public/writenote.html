@@ -825,7 +825,8 @@
   let history = [];
   let historyIndex = -1;
   let snapshotBeforeShape = null;
-  let currentStrokePoints = [];
+  let currentStrokeId = null;
+  const remoteStrokes = {};
   let lastPastedImage = null;
   let imageDrag = null;
   let lastPagePointer = null;
@@ -1196,7 +1197,8 @@
         strokeStyleFor(tool);
         ctx.beginPath();
         ctx.moveTo(p.x,p.y);
-        currentStrokePoints = [{x:p.x/board.width, y:p.y/board.height}];
+        currentStrokeId = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+        emitStrokeSegment('start', p.x, p.y, currentStrokeId);
       }
     };
 
@@ -1236,7 +1238,7 @@
         ctx.stroke();
         ctx.beginPath();
         ctx.moveTo(p.x,p.y);
-        currentStrokePoints.push({x:p.x/board.width, y:p.y/board.height});
+        if(currentStrokeId) emitStrokeSegment('move', p.x, p.y, currentStrokeId);
       }
     };
 
@@ -1644,10 +1646,10 @@
     if(['line','arrow','rect','ellipse','triangle'].includes(tool)){
       const p = getPos(e);
       emitShape(tool, startX/board.width, startY/board.height, p.x/board.width, p.y/board.height);
-    } else if(currentStrokePoints.length>1){
-      emitStroke(tool, currentStrokePoints);
+    } else if(currentStrokeId){
+      emitStrokeSegment('end', null, null, currentStrokeId);
     }
-    currentStrokePoints = [];
+    currentStrokeId = null;
   }
 
   function placeTextEditor(e){
@@ -2161,9 +2163,16 @@
     socket.on('peer-left', ({count})=>{ document.getElementById('connStatus').textContent = 'Đã kết nối — ' + count + ' thiết bị khác'; });
   }
 
-  function emitStroke(t, points){
+  function emitStrokeSegment(phase, x, y, strokeId){
     if(!socket || !socket.connected || !currentRoom) return;
-    socket.emit('stroke', {room: currentRoom, tool:t, color: state.color, width: t==='eraser' ? state.stroke*3 : state.stroke, points});
+    const payload = {room: currentRoom, strokeId, phase};
+    if(phase==='start'){
+      payload.tool = tool;
+      payload.color = state.color;
+      payload.width = tool==='eraser' ? state.stroke*3 : state.stroke;
+    }
+    if(x!==null && x!==undefined){ payload.x = x/board.width; payload.y = y/board.height; }
+    socket.emit('stroke', payload);
   }
   function emitShape(shape, x1,y1,x2,y2){
     if(!socket || !socket.connected || !currentRoom) return;
@@ -2179,19 +2188,29 @@
   }
 
   function applyRemoteStroke(p){
-    ctx.save();
-    ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.globalCompositeOperation = p.tool==='eraser' ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = p.tool==='eraser' ? 'rgba(0,0,0,1)' : p.color;
-    ctx.lineWidth = p.width;
-    ctx.beginPath();
-    p.points.forEach((pt,i)=>{
-      const x = pt.x*board.width, y = pt.y*board.height;
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    });
-    ctx.stroke();
-    ctx.restore();
-    saveCurrentSnapshot(); saveState();
+    if(p.phase==='start'){
+      remoteStrokes[p.strokeId] = { x: p.x*board.width, y: p.y*board.height, tool: p.tool, color: p.color, width: p.width };
+      return;
+    }
+    const st = remoteStrokes[p.strokeId];
+    if(p.phase==='move'){
+      if(!st) return;
+      const x = p.x*board.width, y = p.y*board.height;
+      ctx.save();
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
+      ctx.lineWidth = st.width;
+      ctx.beginPath();
+      ctx.moveTo(st.x, st.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.restore();
+      st.x = x; st.y = y;
+    } else if(p.phase==='end'){
+      delete remoteStrokes[p.strokeId];
+      saveCurrentSnapshot(); saveState();
+    }
   }
 
   function applyRemoteShape(p){

@@ -180,7 +180,8 @@
   let color = '#1B2340';
   const WIDTH_PEN = 3, WIDTH_ERASER = 10;
   let drawing = false;
-  let points = [];
+  let currentStrokeId = null;
+  const remoteStrokes = {};
 
   function resize(){
     const rect = board.getBoundingClientRect();
@@ -225,30 +226,40 @@
     return { x:(t.clientX-rect.left), y:(t.clientY-rect.top) };
   }
 
+  function emitStrokeSegment(phase, x, y, strokeId){
+    if(!socket || !socket.connected) return;
+    const rect = board.getBoundingClientRect();
+    const payload = {room, strokeId, phase};
+    if(phase==='start'){
+      payload.tool = tool;
+      payload.color = color;
+      payload.width = tool==='eraser' ? WIDTH_ERASER : WIDTH_PEN;
+    }
+    if(x!==null && x!==undefined){ payload.x = x/rect.width; payload.y = y/rect.height; }
+    socket.emit('stroke', payload);
+  }
+
   board.addEventListener('pointerdown', (e)=>{
     board.setPointerCapture(e.pointerId);
     drawing = true;
     const p = getPos(e);
     strokeStyleFor(tool);
     ctx.beginPath(); ctx.moveTo(p.x,p.y);
-    const rect = board.getBoundingClientRect();
-    points = [{x:p.x/rect.width, y:p.y/rect.height}];
+    currentStrokeId = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+    emitStrokeSegment('start', p.x, p.y, currentStrokeId);
   });
   board.addEventListener('pointermove', (e)=>{
     if(!drawing) return;
     const p = getPos(e);
     ctx.lineTo(p.x,p.y); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(p.x,p.y);
-    const rect = board.getBoundingClientRect();
-    points.push({x:p.x/rect.width, y:p.y/rect.height});
+    if(currentStrokeId) emitStrokeSegment('move', p.x, p.y, currentStrokeId);
   });
   function end(){
     if(!drawing) return;
     drawing = false;
-    if(points.length>1 && socket && socket.connected){
-      socket.emit('stroke', {room, tool, color, width: tool==='eraser'?WIDTH_ERASER:WIDTH_PEN, points});
-    }
-    points = [];
+    if(currentStrokeId) emitStrokeSegment('end', null, null, currentStrokeId);
+    currentStrokeId = null;
   }
   board.addEventListener('pointerup', end);
   board.addEventListener('pointerleave', end);
@@ -353,18 +364,28 @@
   function handleRemoteStroke(p){
     if(p.room!==room) return;
     const rect = board.getBoundingClientRect();
-    ctx.save();
-    ctx.lineJoin='round'; ctx.lineCap='round';
-    ctx.globalCompositeOperation = p.tool==='eraser' ? 'destination-out' : 'source-over';
-    ctx.strokeStyle = p.tool==='eraser' ? 'rgba(0,0,0,1)' : p.color;
-    ctx.lineWidth = p.width;
-    ctx.beginPath();
-    p.points.forEach((pt,i)=>{
-      const x = pt.x*rect.width, y = pt.y*rect.height;
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    });
-    ctx.stroke();
-    ctx.restore();
+    if(p.phase==='start'){
+      remoteStrokes[p.strokeId] = { x: p.x*rect.width, y: p.y*rect.height, tool: p.tool, color: p.color, width: p.width };
+      return;
+    }
+    const st = remoteStrokes[p.strokeId];
+    if(p.phase==='move'){
+      if(!st) return;
+      const x = p.x*rect.width, y = p.y*rect.height;
+      ctx.save();
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.globalCompositeOperation = st.tool==='eraser' ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = st.tool==='eraser' ? 'rgba(0,0,0,1)' : st.color;
+      ctx.lineWidth = st.width;
+      ctx.beginPath();
+      ctx.moveTo(st.x, st.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.restore();
+      st.x = x; st.y = y;
+    } else if(p.phase==='end'){
+      delete remoteStrokes[p.strokeId];
+    }
   }
   function handleRemoteShape(p){
     if(p.room!==room) return;
